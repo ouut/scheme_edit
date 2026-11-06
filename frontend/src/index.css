@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+:root {
+  --font-mono: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: #1a1b26;
+  color: #c0caf5;
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+/* Monaco Visual Flash for Evaluation */
+.eval-flash {
+  background-color: rgba(56, 189, 248, 0.35) !important;
+  border-radius: 3px !important;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.75) !important;
+  animation: evalFlashPulse 0.35s ease-out forwards;
+}
+
+@keyframes evalFlashPulse {
+  0% {
+    background-color: rgba(56, 189, 248, 0.6);
+    box-shadow: 0 0 20px rgba(56, 189, 248, 0.9);
+  }
+  100% {
+    background-color: rgba(56, 189, 248, 0.1);
+    box-shadow: 0 0 4px rgba(56, 189, 248, 0.2);
+  }
+}
+
+/* Real-time HUD Shortcut Glow Effect */
+.hud-flash-active {
+  animation: hudFlashGlow 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
+  border-color: #38bdf8 !important;
+  background-color: rgba(56, 189, 248, 0.2) !important;
+}
+
+@keyframes hudFlashGlow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.9);
+    transform: scale(0.98);
+  }
+  40% {
+    box-shadow: 0 0 24px 6px rgba(56, 189, 248, 0.75);
+    transform: scale(1.03);
+    background-color: rgba(56, 189, 248, 0.28);
+  }
+  100% {
+    box-shadow: 0 0 6px 0 rgba(56, 189, 248, 0.3);
+    transform: scale(1);
+  }
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #16161e;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2a2e42;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #414868;
+}
