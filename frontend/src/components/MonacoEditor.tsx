@@ -180,8 +180,56 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
 
       editorRef.current = editor;
 
-      // Handle Parinfer on content change
+      // Handle Parinfer on content change & auto-strip macOS dead-key character leaks
       editor.onDidChangeModelContent((e) => {
+        // Auto-revert and intercept stray macOS dead-key characters ('ˆ' or '¨')
+        for (const change of e.changes) {
+          if (change.text === 'ˆ' || change.text === '^') {
+            setTimeout(() => {
+              const model = editor.getModel();
+              if (model) {
+                withParinferLock(() => {
+                  editor.executeEdits('revertDeadCircumflex', [
+                    {
+                      range: new monaco.Range(
+                        change.range.startLineNumber,
+                        change.range.startColumn,
+                        change.range.startLineNumber,
+                        change.range.startColumn + change.text.length
+                      ),
+                      text: '',
+                    },
+                  ]);
+                });
+                executeAction('contract');
+              }
+            }, 0);
+            return;
+          }
+          if (change.text === '¨') {
+            setTimeout(() => {
+              const model = editor.getModel();
+              if (model) {
+                withParinferLock(() => {
+                  editor.executeEdits('revertDeadUmlaut', [
+                    {
+                      range: new monaco.Range(
+                        change.range.startLineNumber,
+                        change.range.startColumn,
+                        change.range.startLineNumber,
+                        change.range.startColumn + change.text.length
+                      ),
+                      text: '',
+                    },
+                  ]);
+                });
+                executeAction('wrap_parens');
+              }
+            }, 0);
+            return;
+          }
+        }
+
         const text = editor.getValue();
         onCodeChangeRef.current?.(text);
 
@@ -525,9 +573,22 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
       };
 
       const handleBeforeInput = (e: InputEvent) => {
-        if (Date.now() - lastAltActionTime < 350) {
+        const inputData = (e as any).data;
+        if (
+          inputData === 'ˆ' ||
+          inputData === '^' ||
+          inputData === '¨' ||
+          Date.now() - lastAltActionTime < 500
+        ) {
           e.preventDefault();
           e.stopPropagation();
+          if (inputData === 'ˆ' || inputData === '^') {
+            lastAltActionTime = Date.now();
+            executeAction('contract');
+          } else if (inputData === '¨') {
+            lastAltActionTime = Date.now();
+            executeAction('wrap_parens');
+          }
         }
       };
 
