@@ -17,6 +17,9 @@ export const HudSidebar: React.FC<HudSidebarProps> = ({
   onClearHistory,
 }) => {
   const [tab, setTab] = useState<'shortcuts' | 'log'>('shortcuts');
+  const isMac =
+    typeof navigator !== 'undefined' &&
+    /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform || navigator.userAgent);
 
   // Group shortcuts by stars (5 down to 1)
   const groupedByStars = [5, 4, 3, 2, 1].map((stars) => ({
@@ -70,7 +73,7 @@ export const HudSidebar: React.FC<HudSidebarProps> = ({
             </h2>
           </div>
           <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-950/70 text-cyan-400 border border-cyan-800/40">
-            One-Shot 17 Keys
+            {isMac ? '⌥ Option (Mac)' : 'One-Shot 17 Keys'}
           </span>
         </div>
 
@@ -144,7 +147,7 @@ export const HudSidebar: React.FC<HudSidebarProps> = ({
                       <div className="flex items-center justify-between mb-1">
                         {/* Key combination badge */}
                         <kbd className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-[#13141f] border border-[#2f354f] text-cyan-300 shadow-inner tracking-tight">
-                          {item.keys}
+                          {isMac && item.macKeys ? item.macKeys : item.keys}
                         </kbd>
 
                         {/* Name & Percentage */}

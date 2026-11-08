@@ -57,7 +57,7 @@ export const DEFAULT_SCHEME_CODE = `;; =========================================
 
 ;; -----------------------------------------------------------------------------
 ;; 🎯 关卡 3: 树形伸缩 — 吞噬与吐出 (Slurp & Barf Workflow)
-;; 核心快捷键: [Alt + J] 向右吞噬 (Slurp)  |  [Alt + L] 向左吐出 (Barf)
+;; 核心快捷键: [Alt + L] 向右吞噬 (Slurp)  |  [Alt + J] 向左吐出 (Barf)
 ;; -----------------------------------------------------------------------------
 ;; 【目标】: 调整 S 表达式的层级边界，绝对不需要删括号重新打！
 ;;
@@ -65,8 +65,8 @@ export const DEFAULT_SCHEME_CODE = `;; =========================================
 ;; 1. 查看下方第 66 行的 (and (user-logged-in? u) (user-admin? u)) has-permission?
 ;;    现在的 has-permission? 在 and 外面，逻辑有 bug！
 ;; 2. 把光标放在 (user-admin? u) 括号内部任意位置
-;; 3. 按 [Alt + J] (Slurp) -> 观察右括号向右跨越，将 has-permission? 吞入 and 内部！
-;; 4. 假设吞错了，按 [Alt + L] (Barf) -> 右括号向左收缩，has-permission? 被吐出在外！
+;; 3. 按 [Alt + L] (Slurp) -> 观察右括号向右跨越，将 has-permission? 吞入 and 内部！
+;; 4. 假设吞错了，按 [Alt + J] (Barf) -> 右括号向左收缩，has-permission? 被吐出在外！
 
 (define (check-access u has-permission?)
   (if (and (user-logged-in? u) (user-admin? u)) has-permission?

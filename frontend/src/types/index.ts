@@ -20,6 +20,7 @@ export type ShortcutId =
 export interface ShortcutItem {
   id: ShortcutId;
   keys: string;
+  macKeys?: string;
   name: string;
   enName: string;
   stars: number;

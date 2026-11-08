@@ -11,12 +11,12 @@
 1. **括号结构是神圣不可侵犯的实体**：括号永远平衡，代码只能在合法树结构间变形。
 2. **永远不要手工键入或删除单边括号**：
    * 想把代码套进括号？用 **`Alt + U`**（圆括号）或 **`Alt + Shift + U`**（方括号）。
-   * 想把外部代码纳入现有括号？用 **`Alt + J`**（向右吞噬 Slurp）。
-   * 想把括号内末尾项踢出去？用 **`Alt + L`**（向左吐出 Barf）。
-   * 想去掉一层外壳括号？用 **`Alt + O`**（脱壳解包 Splice）。
+   * 想把外部代码纳入现有括号？用 **`Alt + L`**（Mac: `⌥ L`，向右吞噬 Slurp）。
+   * 想把括号内末尾项踢出去？用 **`Alt + J`**（Mac: `⌥ J`，向左吐出 Barf）。
+   * 想去掉一层外壳括号？用 **`Alt + O`**（Mac: `⌥ O`，脱壳解包 Splice）。
 3. **手指定位基准（右手 I-J-K-L 十字轮盘）**：
    * `I`（上/内缩） $\leftrightarrow$ `K`（下/外扩）
-   * `J`（左吞入） $\leftrightarrow$ `L`（右吐出）
+   * `J`（左吐出收缩） $\leftrightarrow$ `L`（右吸入扩张）
 
 ---
 
@@ -104,7 +104,7 @@ cards
 
 1. **吞入（Slurp）**：
    * 将光标停留在 `(user-admin? u)` 内部任意位置。
-   * 按下 **`Alt + J`**（向右吞噬）：
+   * 按下 **`Alt + L`**（Mac: `⌥ L`，向右吞噬）：
    ```scheme
    (if (and (user-logged-in? u) (user-admin? u) has-permission?)
        "Access Denied"
@@ -114,7 +114,7 @@ cards
 
 2. **吐出（Barf）**：
    * 假设此时发现逻辑不对，`has-permission?` 不该在 `and` 里。
-   * 光标仍然留在 `and` 内部，按一下 **`Alt + L`**（向左吐出）：
+   * 光标仍然留在 `and` 内部，按一下 **`Alt + J`**（Mac: `⌥ J`，向左吐出）：
    ```scheme
    (if (and (user-logged-in? u) (user-admin? u)) has-permission?
        "Access Denied"
@@ -212,7 +212,7 @@ cards
 ## ⚡ 终极连招速查配方（Muscle Memory Combos）
 
 1. **“闪电包装 + 吞噬” 连招**：
-   `光标在参数上` $\rightarrow$ `Alt + U`（套括号） $\rightarrow$ `输入函数名 + 空格` $\rightarrow$ `Alt + J`（把下一个参数吸入）。
+   `光标在参数上` $\rightarrow$ `Alt + U`（套括号） $\rightarrow$ `输入函数名 + 空格` $\rightarrow$ `Alt + L`（把下一个参数吸入）。
 2. **“安全重构” 连招**：
    `Alt + K`（向外扩选确认范围） $\rightarrow$ 确认高亮区域正是目标 $\rightarrow$ `Alt + X` 或 `Backspace` 一键清除。
 3. **“交互求值闭环” 连招**：

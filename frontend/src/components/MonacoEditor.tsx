@@ -256,15 +256,15 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         () => executeAction('wrap_square')
       );
 
-      // 5. Alt + J : 向右吞噬 (Slurp)
+      // 5. Alt + L : 向右吞噬 (Slurp - 右侧向右扩张)
       editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyJ,
+        monaco.KeyMod.Alt | monaco.KeyCode.KeyL,
         () => executeAction('slurp')
       );
 
-      // 6. Alt + L : 向左吐出 (Barf)
+      // 6. Alt + J : 向左吐出 (Barf - 右侧向左收缩)
       editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyL,
+        monaco.KeyMod.Alt | monaco.KeyCode.KeyJ,
         () => executeAction('barf')
       );
 
@@ -342,119 +342,156 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         () => executeAction('split')
       );
 
-      // Window / Document keydown capture listener to intercept browser conflicts
-      // (Alt+1/2/3 tab switches, Alt+W window close, Alt menu focus, etc.)
+      // Timestamp of last triggered Alt shortcut to suppress macOS dead-key compositions
+      let lastAltActionTime = 0;
+
+      // Window keydown capture listener to intercept browser / macOS conflicts
+      // (Option+U dead key, Option+I circumflex, Alt+1/2/3 tab switches, Alt+W window close, etc.)
       const handleGlobalKeydown = (e: KeyboardEvent) => {
         // Prevent Windows / Chrome from focusing the menu bar on single Alt press
         if (e.key === 'Alt') {
           e.preventDefault();
         }
 
-        // Only handle when Monaco is focused or active
-        if (!editor.hasTextFocus() && document.activeElement !== containerRef.current) {
+        // Avoid stealing keystrokes if focused inside an external input/textarea
+        const target = e.target as HTMLElement | null;
+        const isExternalInput =
+          target &&
+          target !== document.body &&
+          (target.tagName === 'INPUT' ||
+            (target.tagName === 'TEXTAREA' && !target.classList.contains('inputarea')));
+
+        if (isExternalInput) {
           return;
         }
 
         const isAlt = e.altKey;
         const isShift = e.shiftKey;
         const isCtrl = e.ctrlKey || e.metaKey;
+        const code = e.code;
         const key = e.key;
 
-        // Eval REPL: Alt+Enter or Ctrl+Enter
-        if (((isCtrl && !isAlt && !isShift) || (isAlt && !isCtrl && !isShift)) && (key === 'Enter')) {
+        // Eval REPL: Alt+Enter or Ctrl+Enter (or Cmd+Enter on macOS)
+        if (
+          ((isCtrl && !isAlt && !isShift) || (isAlt && !isCtrl && !isShift)) &&
+          (code === 'Enter' || code === 'NumpadEnter' || key === 'Enter')
+        ) {
           e.preventDefault();
           e.stopPropagation();
+          lastAltActionTime = Date.now();
+          editor.focus();
           executeAction('eval_repl');
           return;
         }
 
-        if (isAlt && isShift && !isCtrl) {
-          switch (key.toLowerCase()) {
-            case 'u': // Alt + Shift + U: 方括号包裹 (Wrap Square)
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('wrap_square');
-              return;
-            case 'k': // Alt + Shift + K: 列表切分 (Split)
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('split');
-              return;
+        // Only process Alt/Option shortcuts from here
+        if (!isAlt || isCtrl) {
+          return;
+        }
+
+        // Robust matching helper using physical e.code (100% immune to macOS Option dead keys & diacritics)
+        const matchKey = (
+          targetCode: string,
+          altCodes: string[] = [],
+          targetKeys: string[] = []
+        ) => {
+          if (code === targetCode || altCodes.includes(code)) return true;
+          const lowerKey = key.toLowerCase();
+          if (targetKeys.includes(lowerKey)) return true;
+          return false;
+        };
+
+        const trigger = (id: ShortcutId) => {
+          e.preventDefault();
+          e.stopPropagation();
+          lastAltActionTime = Date.now();
+          editor.focus();
+          executeAction(id);
+        };
+
+        if (isShift) {
+          // Alt + Shift combinations:
+          if (matchKey('KeyU', [], ['u', '¨'])) {
+            // 4. Alt + Shift + U: 方括号包裹 (Wrap Square)
+            trigger('wrap_square');
+            return;
           }
-        } else if (isAlt && !isShift && !isCtrl) {
-          switch (key.toLowerCase()) {
-            case 'k': // Alt + K: 向外扩选 (Expand)
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('expand');
-              return;
-            case 'i': // Alt + I: 向内收缩 (Contract)
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('contract');
-              return;
-            case 'u': // Alt + U: 圆括号包裹 (Wrap Parens)
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('wrap_parens');
-              return;
-            case 'j': // Alt + J: 向右吞噬 (Slurp)
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('slurp');
-              return;
-            case 'l': // Alt + L: 向左吐出 (Barf)
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('barf');
-              return;
-            case '3': // Alt + 3: 选中顶级函数 (Defun)
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('defun');
-              return;
-            case 'o': // Alt + O: 脱壳解包 (Splice)
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('splice');
-              return;
-            case '2': // Alt + 2: 大步前进 (Forward)
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('forward');
-              return;
-            case '1': // Alt + 1: 大步后退 (Backward)
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('backward');
-              return;
-            case 's': // Alt + S: 深度钻入 (Down)
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('down');
-              return;
-            case 'w': // Alt + W: 向上跳出 (Up)
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('up');
-              return;
-            case 'x': // Alt + X: 向后整块删除 (Kill Sexp, 避开 Chrome 地址栏)
-            case 'd': // 兼容别名
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('kill_sexp');
-              return;
-            case '\\': // Alt + \: 智能格式排版 (Indent, 避开 Chrome 菜单)
-            case 'f':  // 兼容别名
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('indent');
-              return;
-            case 'h': // Alt + H: 相邻参数对调 (Transpose)
-              e.preventDefault();
-              e.stopPropagation();
-              executeAction('transpose');
-              return;
+          if (matchKey('KeyK', [], ['k', ''])) {
+            // 17. Alt + Shift + K: 列表切分 (Split)
+            trigger('split');
+            return;
+          }
+        } else {
+          // Alt / Option single key combinations:
+          if (matchKey('KeyK', [], ['k', '˚'])) {
+            // 1. Alt + K: 向外扩选 (Expand)
+            trigger('expand');
+            return;
+          }
+          if (matchKey('KeyI', [], ['i', 'ˆ'])) {
+            // 7. Alt + I: 向内收缩 (Contract) - Note: Option+I is macOS circumflex dead key
+            trigger('contract');
+            return;
+          }
+          if (matchKey('KeyU', [], ['u', '¨'])) {
+            // 3. Alt + U: 圆括号包裹 (Wrap Parens) - Note: Option+U is macOS umlaut dead key
+            trigger('wrap_parens');
+            return;
+          }
+          if (matchKey('KeyL', [], ['l', '¬'])) {
+            // 5. Alt + L: 向右吞噬 (Slurp) - 右侧向右扩张
+            trigger('slurp');
+            return;
+          }
+          if (matchKey('KeyJ', [], ['j', '∆'])) {
+            // 6. Alt + J: 向左吐出 (Barf) - 右侧向左收缩
+            trigger('barf');
+            return;
+          }
+          if (matchKey('Digit3', ['Numpad3'], ['3', '£'])) {
+            // 8. Alt + 3: 选中顶级函数 (Defun)
+            trigger('defun');
+            return;
+          }
+          if (matchKey('KeyO', [], ['o', 'ø'])) {
+            // 9. Alt + O: 脱壳解包 (Splice)
+            trigger('splice');
+            return;
+          }
+          if (matchKey('Digit2', ['Numpad2'], ['2', '™'])) {
+            // 10. Alt + 2: 大步前进 (Forward)
+            trigger('forward');
+            return;
+          }
+          if (matchKey('Digit1', ['Numpad1'], ['1', '¡'])) {
+            // 11. Alt + 1: 大步后退 (Backward)
+            trigger('backward');
+            return;
+          }
+          if (matchKey('KeyS', [], ['s', 'ß'])) {
+            // 12. Alt + S: 深度钻入 (Down)
+            trigger('down');
+            return;
+          }
+          if (matchKey('KeyW', [], ['w', '∑'])) {
+            // 13. Alt + W: 向上跳出 (Up)
+            trigger('up');
+            return;
+          }
+          if (matchKey('KeyX', ['KeyD'], ['x', 'd', '≈', '∂'])) {
+            // 14. Alt + X: 向后整块删除 (Kill Sexp, 兼容 Alt+D)
+            trigger('kill_sexp');
+            return;
+          }
+          if (matchKey('Backslash', ['KeyF'], ['\\', 'f', '«', 'ƒ'])) {
+            // 15. Alt + \: 智能格式排版 (Indent, 兼容 Alt+F)
+            trigger('indent');
+            return;
+          }
+          if (matchKey('KeyH', [], ['h', '˙'])) {
+            // 16. Alt + H: 相邻参数对调 (Transpose)
+            trigger('transpose');
+            return;
           }
         }
       };
@@ -466,8 +503,25 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         }
       };
 
+      // Suppress macOS dead-key composition & beforeinput right after an Alt shortcut
+      const handleCompositionStart = (e: CompositionEvent) => {
+        if (Date.now() - lastAltActionTime < 350) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      };
+
+      const handleBeforeInput = (e: InputEvent) => {
+        if (Date.now() - lastAltActionTime < 350) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      };
+
       window.addEventListener('keydown', handleGlobalKeydown, true);
       window.addEventListener('keyup', handleGlobalKeyup, true);
+      window.addEventListener('compositionstart', handleCompositionStart as EventListener, true);
+      window.addEventListener('beforeinput', handleBeforeInput as EventListener, true);
 
       // Responsive layout observer
       const resizeObserver = new ResizeObserver(() => {
@@ -478,6 +532,8 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
       return () => {
         window.removeEventListener('keydown', handleGlobalKeydown, true);
         window.removeEventListener('keyup', handleGlobalKeyup, true);
+        window.removeEventListener('compositionstart', handleCompositionStart as EventListener, true);
+        window.removeEventListener('beforeinput', handleBeforeInput as EventListener, true);
         resizeObserver.disconnect();
         editor.dispose();
         editorRef.current = null;

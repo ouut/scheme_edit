@@ -49,20 +49,20 @@ function assert(condition, message) {
   assert(res && res.changes.length === 2 && res.changes[0][2] === '[' && res.changes[1][2] === ']', '4. Wrap Square (Alt+Shift+U): wraps with []');
 }
 
-// 5. Alt + J : Slurp
+// 5. Alt + L : Slurp
 {
   const src = '(list (+ 10 20) 30)';
   const ast = paredit.parse(src);
   const res = paredit.editor.slurpSexp(ast, src, 10, { count: 1 });
-  assert(res && res.changes.some(c => c[0] === 'insert' && c[2] === ')'), '5. Slurp (Alt+J): absorbs next sibling');
+  assert(res && res.changes.some(c => c[0] === 'insert' && c[2] === ')'), '5. Slurp (Alt+L): absorbs next sibling');
 }
 
-// 6. Alt + L : Barf
+// 6. Alt + J : Barf
 {
   const src = '(list (+ 10 20 30))';
   const ast = paredit.parse(src);
   const res = paredit.editor.barfSexp(ast, src, 10, { count: 1 });
-  assert(res && res.changes.some(c => c[0] === 'remove'), '6. Barf (Alt+L): ejects last child');
+  assert(res && res.changes.some(c => c[0] === 'remove'), '6. Barf (Alt+J): ejects last child');
 }
 
 // 7. Alt + I : Contract
