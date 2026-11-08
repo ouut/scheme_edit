@@ -71,6 +71,22 @@ function assert(condition, message) {
   const stack = [{ start: 0, end: 10 }];
   const popped = stack.pop();
   assert(popped && popped.start === 0 && popped.end === 10, '7. Contract (Alt+I): restores selection from history stack');
+
+  // AST contraction fallback test
+  const src = '(fib (- n 2))';
+  const ast = paredit.parse(src);
+  let best = null;
+  function walk(node) {
+    if (!node || !node.children) return;
+    for (const child of node.children) {
+      if (child.start >= 0 && child.end <= src.length && (child.start > 0 || child.end < src.length)) {
+        if (!best || (child.end - child.start > best.end - best.start)) best = child;
+      }
+      walk(child);
+    }
+  }
+  walk(ast);
+  assert(best && src.slice(best.start, best.end) === '(- n 2)', '7b. Contract AST fallback: contracts (fib (- n 2)) to (- n 2)');
 }
 
 // 8. Alt + 3 : Defun

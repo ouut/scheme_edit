@@ -268,9 +268,13 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         () => executeAction('barf')
       );
 
-      // 7. Alt + I : 向内收缩 (Contract)
+      // 7. Alt + I / Alt + Shift + I : 向内收缩 (Contract)
       editor.addCommand(
         monaco.KeyMod.Alt | monaco.KeyCode.KeyI,
+        () => executeAction('contract')
+      );
+      editor.addCommand(
+        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyI,
         () => executeAction('contract')
       );
 
@@ -389,15 +393,19 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
           return;
         }
 
-        // Robust matching helper using physical e.code (100% immune to macOS Option dead keys & diacritics)
+        // Robust matching helper using physical e.code + keyCode + characters
         const matchKey = (
           targetCode: string,
+          targetKeyCode: number,
           altCodes: string[] = [],
           targetKeys: string[] = []
         ) => {
           if (code === targetCode || altCodes.includes(code)) return true;
+          if (e.keyCode === targetKeyCode || e.which === targetKeyCode) return true;
           const lowerKey = key.toLowerCase();
           if (targetKeys.includes(lowerKey)) return true;
+          // Dead-key fallback on macOS: when key is 'Dead', match by physical keyCode or code
+          if (lowerKey === 'dead' && (e.keyCode === targetKeyCode || code === targetCode)) return true;
           return false;
         };
 
@@ -411,84 +419,89 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
 
         if (isShift) {
           // Alt + Shift combinations:
-          if (matchKey('KeyU', [], ['u', '¨'])) {
+          if (matchKey('KeyU', 85, [], ['u', '¨'])) {
             // 4. Alt + Shift + U: 方括号包裹 (Wrap Square)
             trigger('wrap_square');
             return;
           }
-          if (matchKey('KeyK', [], ['k', ''])) {
+          if (matchKey('KeyK', 75, [], ['k', ''])) {
             // 17. Alt + Shift + K: 列表切分 (Split)
             trigger('split');
             return;
           }
+          if (matchKey('KeyI', 73, [], ['i', 'ˆ', '^', 'ı'])) {
+            // 7. Alt + Shift + I: 向内收缩 (Contract 别名支持)
+            trigger('contract');
+            return;
+          }
         } else {
           // Alt / Option single key combinations:
-          if (matchKey('KeyK', [], ['k', '˚'])) {
+          if (matchKey('KeyK', 75, [], ['k', '˚'])) {
             // 1. Alt + K: 向外扩选 (Expand)
             trigger('expand');
             return;
           }
-          if (matchKey('KeyI', [], ['i', 'ˆ'])) {
+          if (matchKey('KeyI', 73, [], ['i', 'ˆ', '^', 'ı'])) {
             // 7. Alt + I: 向内收缩 (Contract) - Note: Option+I is macOS circumflex dead key
             trigger('contract');
             return;
           }
-          if (matchKey('KeyU', [], ['u', '¨'])) {
+          if (matchKey('KeyU', 85, [], ['u', '¨'])) {
             // 3. Alt + U: 圆括号包裹 (Wrap Parens) - Note: Option+U is macOS umlaut dead key
             trigger('wrap_parens');
             return;
           }
-          if (matchKey('KeyL', [], ['l', '¬'])) {
+          if (matchKey('KeyL', 76, [], ['l', '¬'])) {
             // 5. Alt + L: 向右吞噬 (Slurp) - 右侧向右扩张
             trigger('slurp');
             return;
           }
-          if (matchKey('KeyJ', [], ['j', '∆'])) {
+          if (matchKey('KeyJ', 74, [], ['j', '∆'])) {
             // 6. Alt + J: 向左吐出 (Barf) - 右侧向左收缩
             trigger('barf');
             return;
           }
-          if (matchKey('Digit3', ['Numpad3'], ['3', '£'])) {
+          if (matchKey('Digit3', 51, ['Numpad3'], ['3', '£'])) {
             // 8. Alt + 3: 选中顶级函数 (Defun)
             trigger('defun');
             return;
           }
-          if (matchKey('KeyO', [], ['o', 'ø'])) {
+          if (matchKey('KeyO', 79, [], ['o', 'ø'])) {
             // 9. Alt + O: 脱壳解包 (Splice)
             trigger('splice');
             return;
           }
-          if (matchKey('Digit2', ['Numpad2'], ['2', '™'])) {
+          if (matchKey('Digit2', 50, ['Numpad2'], ['2', '™'])) {
             // 10. Alt + 2: 大步前进 (Forward)
             trigger('forward');
             return;
           }
-          if (matchKey('Digit1', ['Numpad1'], ['1', '¡'])) {
+          if (matchKey('Digit1', 49, ['Numpad1'], ['1', '¡'])) {
             // 11. Alt + 1: 大步后退 (Backward)
             trigger('backward');
             return;
           }
-          if (matchKey('KeyS', [], ['s', 'ß'])) {
+          if (matchKey('KeyS', 83, [], ['s', 'ß'])) {
             // 12. Alt + S: 深度钻入 (Down)
             trigger('down');
             return;
           }
-          if (matchKey('KeyW', [], ['w', '∑'])) {
+          if (matchKey('KeyW', 87, [], ['w', '∑'])) {
             // 13. Alt + W: 向上跳出 (Up)
             trigger('up');
             return;
           }
-          if (matchKey('KeyX', ['KeyD'], ['x', 'd', '≈', '∂'])) {
+          if (matchKey('KeyX', 88, ['KeyD'], ['x', 'd', '≈', '∂'])) {
             // 14. Alt + X: 向后整块删除 (Kill Sexp, 兼容 Alt+D)
             trigger('kill_sexp');
             return;
           }
-          if (matchKey('Backslash', ['KeyF'], ['\\', 'f', '«', 'ƒ'])) {
+          if (matchKey('Backslash', 220, ['KeyF'], ['\\', 'f', '«', 'ƒ'])) {
             // 15. Alt + \: 智能格式排版 (Indent, 兼容 Alt+F)
             trigger('indent');
             return;
           }
-          if (matchKey('KeyH', [], ['h', '˙'])) {
+          if (matchKey('KeyH', 72, [], ['h', '˙'])) {
             // 16. Alt + H: 相邻参数对调 (Transpose)
             trigger('transpose');
             return;

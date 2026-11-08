@@ -294,8 +294,15 @@ export function expandSelection(editor: monaco.editor.IStandaloneCodeEditor): { 
     to = from;
   }
 
-  // Save current selection for Contract (Alt + Shift + K)
-  selectionHistoryStack.push(currentSelection);
+  // Save cloned current selection for Contract (Alt + I)
+  selectionHistoryStack.push(
+    new monaco.Selection(
+      currentSelection.selectionStartLineNumber,
+      currentSelection.selectionStartColumn,
+      currentSelection.positionLineNumber,
+      currentSelection.positionColumn
+    )
+  );
 
   // 1. Try paredit.js sexpRangeExpansion
   try {
@@ -708,65 +715,108 @@ export function barfForward(editor: monaco.editor.IStandaloneCodeEditor): { succ
 }
 
 /**
- * 7. Alt + Shift + K : 向内收缩 (Contract)
+ * 7. Alt + I : 向内收缩 (Contract)
  */
 export function contractSelection(editor: monaco.editor.IStandaloneCodeEditor): { success: boolean; detail?: string } {
   const model = editor.getModel();
   if (!model) return { success: false, detail: 'No model' };
 
-  // 1. Check selection history stack first
-  if (selectionHistoryStack.length > 0) {
+  const currentSelection = editor.getSelection();
+  if (!currentSelection) return { success: false, detail: 'No selection' };
+
+  // 1. Try history stack first IF top of stack is strictly smaller or different from current selection
+  while (selectionHistoryStack.length > 0) {
     const prev = selectionHistoryStack.pop()!;
-    editor.setSelection(prev);
-    editor.revealRange(prev);
-    return { success: true, detail: `Restored selection from stack (${selectionHistoryStack.length} remaining)` };
-  }
-
-  // 2. If stack empty, shrink to innermost child node
-  const selection = editor.getSelection();
-  if (!selection || selection.isEmpty()) {
-    return { success: false, detail: 'Stack empty, no selection' };
-  }
-
-  const text = model.getValue();
-  const roots = parseSexpressions(text);
-
-  const s = model.getOffsetAt({
-    lineNumber: selection.startLineNumber,
-    column: selection.startColumn,
-  });
-  const e = model.getOffsetAt({
-    lineNumber: selection.endLineNumber,
-    column: selection.endColumn,
-  });
-  const from = Math.min(s, e);
-  const to = Math.max(s, e);
-
-  let candidate: any = null;
-
-  function check(nodes: SexpNode[]) {
-    for (const node of nodes) {
-      if (node.start >= from && node.end <= to && (node.start > from || node.end < to)) {
-        if (!candidate || node.end - node.start > candidate.end - candidate.start) {
-          candidate = node;
-        }
-      }
-      if (node.children) check(node.children);
+    if (
+      prev.selectionStartLineNumber !== currentSelection.selectionStartLineNumber ||
+      prev.selectionStartColumn !== currentSelection.selectionStartColumn ||
+      prev.positionLineNumber !== currentSelection.positionLineNumber ||
+      prev.positionColumn !== currentSelection.positionColumn
+    ) {
+      editor.setSelection(prev);
+      editor.revealRange(prev);
+      return { success: true, detail: `Restored selection from stack (${selectionHistoryStack.length} remaining)` };
     }
   }
 
-  check(roots);
+  // 2. Fallback AST-based contraction around cursor!
+  const text = model.getValue();
+  let ast: any;
+  try {
+    ast = paredit.parse(text);
+  } catch {
+    return { success: false, detail: 'AST parse error' };
+  }
 
-  if (candidate) {
-    const pStart = model.getPositionAt(candidate.start);
-    const pEnd = model.getPositionAt(candidate.end);
-    editor.setSelection(
-      new monaco.Selection(pStart.lineNumber, pStart.column, pEnd.lineNumber, pEnd.column)
-    );
-    editor.revealRange(
-      new monaco.Range(pStart.lineNumber, pStart.column, pEnd.lineNumber, pEnd.column)
-    );
-    return { success: true, detail: `Contracted to inner node [${candidate.start}, ${candidate.end}]` };
+  let from: number;
+  let to: number;
+  const cursorOffset = model.getOffsetAt(editor.getPosition() || { lineNumber: 1, column: 1 });
+
+  if (!currentSelection.isEmpty()) {
+    const s = model.getOffsetAt({
+      lineNumber: currentSelection.startLineNumber,
+      column: currentSelection.startColumn,
+    });
+    const e = model.getOffsetAt({
+      lineNumber: currentSelection.endLineNumber,
+      column: currentSelection.endColumn,
+    });
+    from = Math.min(s, e);
+    to = Math.max(s, e);
+  } else {
+    // If no selection, contract from the enclosing S-expression
+    const enclosing = paredit.navigator.sexpRange(ast, cursorOffset);
+    if (enclosing && (enclosing[0] < cursorOffset || enclosing[1] > cursorOffset)) {
+      from = enclosing[0];
+      to = enclosing[1];
+    } else {
+      return { success: false, detail: 'Already at innermost cursor position' };
+    }
+  }
+
+  // Find the best child node inside [from, to] containing cursorOffset
+  let best: any = null;
+
+  function walk(node: any) {
+    if (!node) return;
+    if (node.children) {
+      for (const child of node.children) {
+        if (child.start >= from && child.end <= to && (child.start > from || child.end < to)) {
+          if (!best) {
+            best = child;
+          } else {
+            const childContains = cursorOffset >= child.start && cursorOffset <= child.end;
+            const bestContains = cursorOffset >= best.start && cursorOffset <= best.end;
+            if (childContains && !bestContains) {
+              best = child;
+            } else if (childContains === bestContains) {
+              if (child.end - child.start > best.end - best.start) {
+                best = child;
+              }
+            }
+          }
+        }
+        walk(child);
+      }
+    }
+  }
+
+  walk(ast);
+
+  if (best) {
+    const pStart = model.getPositionAt(best.start);
+    const pEnd = model.getPositionAt(best.end);
+    const newSel = new monaco.Selection(pStart.lineNumber, pStart.column, pEnd.lineNumber, pEnd.column);
+    editor.setSelection(newSel);
+    editor.revealRange(newSel);
+    return { success: true, detail: `Contracted to [${best.start}, ${best.end}]` };
+  }
+
+  // If already at an atom with cursor inside it, collapse to cursor
+  if (!currentSelection.isEmpty()) {
+    const pos = editor.getPosition() || model.getPositionAt(from);
+    editor.setSelection(new monaco.Selection(pos.lineNumber, pos.column, pos.lineNumber, pos.column));
+    return { success: true, detail: 'Collapsed to cursor' };
   }
 
   return { success: false, detail: 'Cannot contract further' };
