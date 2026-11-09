@@ -103,22 +103,63 @@
 
 ---
 
+## 📦 独立二进制发布与跨平台支持 (Standalone Binary & Releases)
+
+本项目支持**编译为完全自包含的单个二进制可执行文件**（Single Self-Contained Binary）：
+- **零运行时依赖**：使用 `rust-embed` 在编译期将 Monaco Editor、xterm.js、字体、Web Workers 与 CSS 完整打包进二进制文件的数据段。
+- **开箱即用**：无需安装 Node.js、npm 或保留静态资源文件夹，单个可执行文件直接启动并提供完整 Web IDE 服务。
+- **跨平台原生支持**：
+  - **Linux (x86_64)**: `scheme-ide-linux-x86_64.tar.gz` (内置 `/bin/bash` PTY)
+  - **macOS Universal**: `scheme-ide-macos-universal.tar.gz` (Apple Silicon M 系列与 Intel 架构通用二进制，内置 `/bin/zsh` / `$SHELL` PTY)
+  - **Windows (x86_64)**: `scheme-ide-windows-x86_64.zip` (Windows ConPTY / `cmd.exe` / PowerShell 原生支持)
+
+### ⬇️ 从 GitHub Releases 下载
+前往仓库的 [**Releases 页面**](../../releases) 下载对应平台的打包产物：
+```bash
+# 以 Linux / macOS 为例：
+tar -xvf scheme-ide-*.tar.gz
+./scheme-ide
+```
+
+### ⚙️ 环境变量配置
+
+| 环境变量 | 默认值 | 作用说明 |
+| :--- | :--- | :--- |
+| `PORT` | `3000` | IDE 服务监听的 HTTP 端口 |
+| `STEEL_BIN` | 自动探测 | Steel Scheme 可执行文件路径（优先探测二进制同级目录、`~/.cargo/bin/steel` 及 PATH） |
+| `STATIC_DIR` | 内置资源 | 可选，用于开发时覆盖内置前端资源，指定本地磁盘路径（如 `./frontend/dist`） |
+
+### 🛠️ 本地编译构建单个二进制
+
+```bash
+# 1. 构建前端静态资源
+cd frontend && npm ci && npm run build && cd ..
+
+# 2. 编译自包含发布二进制
+cargo build --release --manifest-path server/Cargo.toml
+
+# 产物即为单文件可执行程序：server/target/release/scheme-ide
+```
+
+---
+
 ## 🧪 自动化测试套件
 
 本仓库包含全套单元测试与前后端集成测试：
 
-1. **前端快捷键与交互集成测试（31 项全绿）**：
+1. **前端快捷键与交互集成测试（47 项全绿）**：
    ```bash
    cd frontend && npm test
    # 包含：
    # - testShortcuts.js (18 项 Strict Paredit 快捷键逻辑)
-   # - testFrontendIntegration.js (13 项冷启动、动态展开/折叠、比例计算、CLI 命令解析与 Monaco Sexp 提取)
+   # - testFrontendIntegration.js (29 项冷启动、动态展开/折叠、比例计算、CLI 命令拦截解析、防重开标签与 Monaco Sexp 提取)
    ```
 
-2. **后端 Rust 单元与端到端测试（25 项全绿）**：
+2. **后端 Rust 单元与端到端测试（26 项全绿）**：
    ```bash
    cd server && cargo test
    # 包含：
+   # - 静态嵌入资源 (rust-embed) SPA 路由测试
    # - Steel PTY 与 Bash PTY 生命周期与双向流
    # - WebSocket 终端全链路集成测试
    # - CLI gui 命令解析与拦截测试

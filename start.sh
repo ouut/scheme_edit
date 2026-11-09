@@ -12,11 +12,17 @@ echo "  Port: $PORT"
 echo "  Static Dir: $STATIC_DIR"
 echo "=================================================="
 
+SERVER_BIN="$DIR/server/target/release/scheme-ide"
+if [ ! -f "$SERVER_BIN" ] && [ -f "$DIR/server/target/release/server" ]; then
+    SERVER_BIN="$DIR/server/target/release/server"
+fi
+
 # Check if release binary exists, else build it
-if [ ! -f "$DIR/server/target/release/server" ]; then
+if [ ! -f "$SERVER_BIN" ]; then
     echo "Building Rust server (release profile)..."
     cd "$DIR/server"
     cargo build --release
+    SERVER_BIN="$DIR/server/target/release/scheme-ide"
 fi
 
 # Check if frontend/dist exists, else build it
@@ -27,7 +33,7 @@ if [ ! -f "$STATIC_DIR/index.html" ]; then
 fi
 
 # If an older instance of the server is running on the same port, terminate it cleanly
-pkill -f "$DIR/server/target/release/server" 2>/dev/null || true
+pkill -f "scheme-ide" 2>/dev/null || pkill -f "$DIR/server/target/release/server" 2>/dev/null || true
 sleep 0.5
 
 echo "--------------------------------------------------"
@@ -44,4 +50,4 @@ echo "=================================================="
 
 export PORT
 export STATIC_DIR
-exec "$DIR/server/target/release/server"
+exec "$SERVER_BIN"

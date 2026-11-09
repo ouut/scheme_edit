@@ -37,10 +37,12 @@ pub fn spawn_pty(
     })?;
 
     let cmd = if cmd_name == "steel" {
-        let bin = if Path::new("/root/.cargo/bin/steel").exists() {
-            PathBuf::from("/root/.cargo/bin/steel")
-        } else if steel_bin.exists() {
+        let bin = if steel_bin.exists() {
             steel_bin.to_path_buf()
+        } else if Path::new("/root/.cargo/bin/steel").exists() {
+            PathBuf::from("/root/.cargo/bin/steel")
+        } else if cfg!(windows) {
+            PathBuf::from("steel.exe")
         } else {
             PathBuf::from("steel")
         };
@@ -50,14 +52,30 @@ pub fn spawn_pty(
         cb.env("COLORTERM", "truecolor");
         cb
     } else {
-        let bash_bin = if Path::new("/bin/bash").exists() {
+        let shell_bin = if cfg!(windows) {
+            if let Ok(comspec) = std::env::var("COMSPEC") {
+                PathBuf::from(comspec)
+            } else {
+                PathBuf::from("cmd.exe")
+            }
+        } else if let Ok(shell) = std::env::var("SHELL").map(PathBuf::from) {
+            if shell.exists() {
+                shell
+            } else if Path::new("/bin/bash").exists() {
+                PathBuf::from("/bin/bash")
+            } else if Path::new("/bin/zsh").exists() {
+                PathBuf::from("/bin/zsh")
+            } else {
+                PathBuf::from("sh")
+            }
+        } else if Path::new("/bin/bash").exists() {
             PathBuf::from("/bin/bash")
-        } else if Path::new("/bin/sh").exists() {
-            PathBuf::from("/bin/sh")
+        } else if Path::new("/bin/zsh").exists() {
+            PathBuf::from("/bin/zsh")
         } else {
             PathBuf::from("sh")
         };
-        let mut cb = CommandBuilder::new(bash_bin);
+        let mut cb = CommandBuilder::new(shell_bin);
         cb.cwd(workspace_dir);
         cb.env("TERM", "xterm-256color");
         cb.env("COLORTERM", "truecolor");

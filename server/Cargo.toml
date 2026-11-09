@@ -15,6 +15,12 @@ tempfile = "3"
 portable-pty = "0.9.0"
 futures-util = "0.3"
 anyhow = "1.0"
+rust-embed = "8"
+mime_guess = "2.0"
+
+[[bin]]
+name = "scheme-ide"
+path = "src/main.rs"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

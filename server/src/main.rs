@@ -144,6 +144,7 @@ pub struct AppState {
     pub steel_bin: PathBuf,
     pub steel_version: String,
     pub static_dir: Option<PathBuf>,
+    pub serve_embedded: bool,
     pub repl: Arc<tokio::sync::Mutex<Option<SteelReplProcess>>>,
     pub eval_counter: Arc<AtomicU64>,
     pub gui_broadcast: tokio::sync::broadcast::Sender<String>,
@@ -522,19 +523,42 @@ pub fn find_steel_binary() -> PathBuf {
         }
     }
 
+    // 1. Check right next to current executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let candidate = if cfg!(windows) {
+                dir.join("steel.exe")
+            } else {
+                dir.join("steel")
+            };
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+
+    // 2. Check ~/.cargo/bin/steel
     let cargo_bin = PathBuf::from("/root/.cargo/bin/steel");
     if cargo_bin.exists() {
         return cargo_bin;
     }
 
-    if let Ok(home) = std::env::var("HOME") {
-        let p = PathBuf::from(home).join(".cargo/bin/steel");
+    if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+        let p = PathBuf::from(&home).join(".cargo/bin/steel");
         if p.exists() {
             return p;
         }
+        let p_exe = PathBuf::from(&home).join(".cargo/bin/steel.exe");
+        if p_exe.exists() {
+            return p_exe;
+        }
     }
 
-    PathBuf::from("steel")
+    if cfg!(windows) {
+        PathBuf::from("steel.exe")
+    } else {
+        PathBuf::from("steel")
+    }
 }
 
 /// Detect steel version by running `steel --version`.
@@ -844,6 +868,46 @@ pub fn friendly_fallback_html() -> &'static str {
 </html>"#
 }
 
+#[derive(rust_embed::RustEmbed)]
+#[folder = "../frontend/dist/"]
+pub struct EmbeddedAssets;
+
+/// Handler for serving embedded assets with mime types and SPA fallback to index.html
+pub async fn embedded_static_handler(uri: axum::http::Uri) -> impl IntoResponse {
+    let raw_path = uri.path().trim_start_matches('/');
+    let path = if raw_path.is_empty() {
+        "index.html"
+    } else {
+        raw_path
+    };
+
+    if let Some(content) = EmbeddedAssets::get(path) {
+        let mime = mime_guess::from_path(path).first_or_octet_stream();
+        return (
+            [
+                (header::CONTENT_TYPE, mime.as_ref()),
+            ],
+            content.data,
+        )
+            .into_response();
+    }
+
+    // SPA fallback: for any route without file extension (or HTML), return index.html
+    if !path.contains('.') || path.ends_with(".html") {
+        if let Some(index) = EmbeddedAssets::get("index.html") {
+            return (
+                [
+                    (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+                ],
+                index.data,
+            )
+                .into_response();
+        }
+    }
+
+    (StatusCode::NOT_FOUND, "404 Not Found").into_response()
+}
+
 /// Fallback route when requested asset doesn't exist
 pub async fn friendly_fallback_handler() -> impl IntoResponse {
     (
@@ -877,6 +941,8 @@ pub fn create_app(state: Arc<AppState>) -> Router {
                 ServeDir::new(dir).fallback(axum::routing::get(friendly_fallback_handler)),
             )
         }
+    } else if state.serve_embedded && EmbeddedAssets::get("index.html").is_some() {
+        router.fallback(embedded_static_handler)
     } else {
         router.fallback(friendly_fallback_handler)
     };
@@ -906,6 +972,7 @@ async fn main() {
         steel_bin,
         steel_version,
         static_dir,
+        serve_embedded: true,
         repl: Arc::new(tokio::sync::Mutex::new(None)),
         eval_counter: Arc::new(AtomicU64::new(1)),
         gui_broadcast,
@@ -950,6 +1017,7 @@ mod tests {
             steel_bin,
             steel_version,
             static_dir: None,
+            serve_embedded: false,
             repl: Arc::new(tokio::sync::Mutex::new(None)),
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
@@ -1329,6 +1397,37 @@ mod tests {
         assert!(html.contains("Scheme Editor Backend"));
     }
 
+    #[tokio::test]
+    async fn test_embedded_assets_serving() {
+        if EmbeddedAssets::get("index.html").is_none() {
+            return;
+        }
+        let steel_bin = find_steel_binary();
+        let steel_version = detect_steel_version(&steel_bin);
+        let (gui_broadcast, _) = tokio::sync::broadcast::channel(100);
+        let state = Arc::new(AppState {
+            steel_bin,
+            steel_version,
+            static_dir: None,
+            serve_embedded: true,
+            repl: Arc::new(tokio::sync::Mutex::new(None)),
+            eval_counter: Arc::new(AtomicU64::new(1)),
+            gui_broadcast,
+        });
+        let app = create_app(state);
+        let req = Request::builder()
+            .uri("/")
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains("<html") || html.contains("<!DOCTYPE html>") || html.contains("<!doctype html>"));
+    }
+
     #[test]
     fn test_gui_command_parsing() {
         use crate::terminal::handle_gui_command;
@@ -1473,6 +1572,7 @@ mod tests {
             steel_bin,
             steel_version,
             static_dir: None,
+            serve_embedded: false,
             repl: Arc::new(tokio::sync::Mutex::new(None)),
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
@@ -1585,6 +1685,7 @@ mod tests {
             steel_bin,
             steel_version,
             static_dir: None,
+            serve_embedded: false,
             repl: Arc::new(tokio::sync::Mutex::new(None)),
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
