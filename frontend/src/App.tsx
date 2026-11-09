@@ -1,247 +1,321 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Header } from './components/Header';
-import { MonacoEditor, MonacoEditorHandle } from './components/MonacoEditor';
-import { HudSidebar } from './components/HudSidebar';
-import { ReplPanel } from './components/ReplPanel';
-import { DEFAULT_SCHEME_CODE } from './lib/sampleCode';
-import { SHORTCUTS_LIST } from './lib/shortcuts';
-import {
-  ShortcutId,
-  ParinferMode,
-  ActionHistoryEntry,
-  EvalResultEntry,
-  ServerStatus,
-} from './types';
+import { EditorPanel, EditorPanelHandle } from './components/EditorPanel';
+import { TerminalPanel, TerminalPanelHandle } from './components/TerminalPanel';
+import { OpenFile, ParinferMode, ShortcutId, GuiActionPayload } from './types';
 
 export const App: React.FC = () => {
-  const editorRef = useRef<MonacoEditorHandle>(null);
+  const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
+  const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
+  const [splitRatio, setSplitRatio] = useState<number>(0.6); // Default 60:40
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [parinferMode] = useState<ParinferMode>('paren');
+  const [scratchCounter, setScratchCounter] = useState<number>(1);
 
-  const [parinferMode, setParinferMode] = useState<ParinferMode>('paren');
-  const [serverStatus, setServerStatus] = useState<ServerStatus>('ready');
-  const [activeFlashId, setActiveFlashId] = useState<ShortcutId | null>(null);
-  const [history, setHistory] = useState<ActionHistoryEntry[]>([]);
-  const [replEntries, setReplEntries] = useState<EvalResultEntry[]>([]);
-  const [isReplOpen, setIsReplOpen] = useState<boolean>(true);
-  const [showHud, setShowHud] = useState<boolean>(true);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const editorPanelRef = useRef<EditorPanelHandle>(null);
+  const terminalPanelRef = useRef<TerminalPanelHandle>(null);
+  const saveTimerRef = useRef<Map<string, number>>(new Map());
 
-  const flashTimerRef = useRef<number | null>(null);
+  const isEditorOpen = openFiles.length > 0;
 
-  // Probe server connection on mount
-  useEffect(() => {
-    let isMounted = true;
-    async function checkServer() {
-      try {
-        const res = await fetch('/api/eval', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code: '(+ 1 1)' }),
-        });
-        if (isMounted) {
-          if (res.ok) {
-            setServerStatus('connected');
-          } else {
-            setServerStatus('ready');
-          }
-        }
-      } catch {
-        if (isMounted) {
-          setServerStatus('ready');
-        }
+  // Auto-save file content to /api/file
+  const saveFileToServer = useCallback(async (filePath: string, content: string) => {
+    try {
+      const res = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: filePath, content }),
+      });
+
+      if (res.ok) {
+        setOpenFiles((prev) =>
+          prev.map((f) =>
+            f.path === filePath ? { ...f, savedContent: content, isModified: false } : f
+          )
+        );
       }
+    } catch (err) {
+      console.warn(`Failed to auto-save ${filePath}:`, err);
     }
-    checkServer();
-    return () => {
-      isMounted = false;
-    };
   }, []);
 
-  // Format timestamp helper: HH:MM:SS.mmm
-  const getFormattedTime = () => {
-    const d = new Date();
-    const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(
-      d.getMilliseconds(),
-      3
-    )}`;
-  };
+  // Handle content changes with debounce save
+  const handleCodeChange = useCallback(
+    (filePath: string, newContent: string) => {
+      setOpenFiles((prev) =>
+        prev.map((f) =>
+          f.path === filePath
+            ? { ...f, content: newContent, isModified: newContent !== f.savedContent }
+            : f
+        )
+      );
 
-  // Handle shortcut triggered from keyboard or HUD click
-  const handleShortcutTriggered = useCallback(
-    (id: ShortcutId, detail: string, success: boolean) => {
-      // 1. Trigger HUD real-time glowing flash
-      setActiveFlashId(id);
-      if (flashTimerRef.current) {
-        window.clearTimeout(flashTimerRef.current);
+      // Debounce auto-save after 800ms
+      const existingTimer = saveTimerRef.current.get(filePath);
+      if (existingTimer) {
+        window.clearTimeout(existingTimer);
       }
-      flashTimerRef.current = window.setTimeout(() => {
-        setActiveFlashId(null);
-      }, 500);
 
-      // 2. Prepend to action history log
-      const info = SHORTCUTS_LIST.find((s) => s.id === id);
-      const newEntry: ActionHistoryEntry = {
-        id: `${Date.now()}-${Math.random().toString(36).substring(7)}`,
-        shortcutId: id,
-        shortcutName: info ? `${info.name} (${info.enName})` : id,
-        shortcutKeys: info ? info.keys : id,
-        timestamp: getFormattedTime(),
-        status: detail,
-        success,
+      const timer = window.setTimeout(() => {
+        saveFileToServer(filePath, newContent);
+        saveTimerRef.current.delete(filePath);
+      }, 800);
+
+      saveTimerRef.current.set(filePath, timer);
+    },
+    [saveFileToServer]
+  );
+
+  // Immediate save on Ctrl+S / Cmd+S
+  const handleSaveActiveFile = useCallback(() => {
+    if (!activeFilePath) return;
+    const file = openFiles.find((f) => f.path === activeFilePath);
+    if (!file) return;
+
+    const existingTimer = saveTimerRef.current.get(activeFilePath);
+    if (existingTimer) {
+      window.clearTimeout(existingTimer);
+      saveTimerRef.current.delete(activeFilePath);
+    }
+
+    saveFileToServer(activeFilePath, file.content);
+  }, [activeFilePath, openFiles, saveFileToServer]);
+
+  // Open file (from server /api/file, GUI action, or scratch)
+  const openFile = useCallback(
+    async (filePath: string, initialContent?: string) => {
+      // If already open, switch active tab and ensure left panel is open
+      const existing = openFiles.find((f) => f.path === filePath);
+      if (existing) {
+        setActiveFilePath(filePath);
+        return;
+      }
+
+      let content = initialContent;
+      if (content === undefined) {
+        try {
+          const res = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`);
+          if (res.ok) {
+            const contentType = res.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+              const data = await res.json();
+              content = data.content ?? data.text ?? '';
+            } else {
+              content = await res.text();
+            }
+          } else {
+            content = '';
+          }
+        } catch {
+          content = '';
+        }
+      }
+
+      const newFile: OpenFile = {
+        path: filePath,
+        name: filePath.split('/').pop() || filePath,
+        content: content || '',
+        savedContent: content || '',
+        isModified: false,
       };
 
-      setHistory((prev) => [newEntry, ...prev.slice(0, 49)]);
+      setOpenFiles((prev) => [...prev, newFile]);
+      setActiveFilePath(filePath);
+
+      // Restore 60:40 ratio if previously collapsed
+      setSplitRatio((prev) => (prev <= 0.05 ? 0.6 : prev));
+    },
+    [openFiles]
+  );
+
+  // Close file tab
+  const closeFile = useCallback(
+    (filePath: string) => {
+      // Clear pending save timer
+      const timer = saveTimerRef.current.get(filePath);
+      if (timer) {
+        window.clearTimeout(timer);
+        saveTimerRef.current.delete(filePath);
+      }
+
+      setOpenFiles((prev) => {
+        const nextFiles = prev.filter((f) => f.path !== filePath);
+
+        if (activeFilePath === filePath) {
+          if (nextFiles.length > 0) {
+            const idx = prev.findIndex((f) => f.path === filePath);
+            const nextActive = nextFiles[Math.min(idx, nextFiles.length - 1)];
+            setActiveFilePath(nextActive.path);
+          } else {
+            setActiveFilePath(null);
+          }
+        }
+
+        return nextFiles;
+      });
+    },
+    [activeFilePath]
+  );
+
+  // Create new scratch buffer
+  const handleNewScratchFile = useCallback(() => {
+    const filename = `scratch-${scratchCounter}.scm`;
+    setScratchCounter((c) => c + 1);
+    openFile(filename, ';; Scheme Scratch Buffer\n');
+  }, [scratchCounter, openFile]);
+
+  // Alt+Enter / Ctrl+Enter: Send selected or current S-expression to Tab 1 ("λ REPL")
+  const handleSendToRepl = useCallback((code: string) => {
+    terminalPanelRef.current?.sendToRepl(code);
+  }, []);
+
+  // Listen for GUI actions from server or terminal
+  const handleGuiAction = useCallback(
+    (payload: GuiActionPayload) => {
+      if (payload.action === 'open' && payload.file) {
+        openFile(payload.file);
+      } else if (payload.action === 'close') {
+        if (payload.file) {
+          closeFile(payload.file);
+        } else if (activeFilePath) {
+          closeFile(activeFilePath);
+        }
+      } else if (payload.action === 'ratio' && payload.left !== undefined && payload.right !== undefined) {
+        const sum = payload.left + payload.right;
+        if (sum > 0) {
+          if (payload.left === 0) {
+            // Collapse left panel
+            setOpenFiles([]);
+            setActiveFilePath(null);
+          } else {
+            const newRatio = payload.left / sum;
+            setSplitRatio(Math.max(0.1, Math.min(0.9, newRatio)));
+          }
+        }
+      }
+    },
+    [openFile, closeFile, activeFilePath]
+  );
+
+  // Check URL params on initial mount (?open=... or ?file=...)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const initialFile = params.get('open') || params.get('file');
+    if (initialFile) {
+      openFile(initialFile);
+    }
+  }, [openFile]);
+
+  // Draggable divider mouse handler
+  const startDragging = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      setIsDragging(true);
+
+      const onMouseMove = (moveEvent: MouseEvent) => {
+        if (!containerRef.current) return;
+        const rect = containerRef.current.getBoundingClientRect();
+        const newRatio = (moveEvent.clientX - rect.left) / rect.width;
+        // Clamp between 15% and 85%
+        setSplitRatio(Math.max(0.15, Math.min(0.85, newRatio)));
+      };
+
+      const onMouseUp = () => {
+        setIsDragging(false);
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', onMouseUp);
+
+        // Notify editor and terminal to recalculate layout
+        requestAnimationFrame(() => {
+          editorPanelRef.current?.layout();
+          terminalPanelRef.current?.fitActiveTerminal();
+        });
+      };
+
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
     },
     []
   );
 
-  // Handle evaluation result from /api/eval
-  const handleEvalResult = useCallback((data: {
-    code: string;
-    result?: string;
-    stdout?: string;
-    stderr?: string;
-    error?: string;
-    duration_ms: number;
-    success: boolean;
-  }) => {
-    if (data.success) {
-      setServerStatus('connected');
-    } else if (data.error && data.error.includes('Cannot connect')) {
-      setServerStatus('error');
+  // Re-fit editor and terminal whenever split ratio or openFiles changes
+  useEffect(() => {
+    if (!isDragging) {
+      const timer = setTimeout(() => {
+        editorPanelRef.current?.layout();
+        terminalPanelRef.current?.fitActiveTerminal();
+      }, 50);
+      return () => clearTimeout(timer);
     }
+  }, [splitRatio, isDragging, isEditorOpen]);
 
-    const newResult: EvalResultEntry = {
-      id: `${Date.now()}-${Math.random().toString(36).substring(7)}`,
-      code: data.code,
-      result: data.result,
-      stdout: data.stdout,
-      stderr: data.stderr,
-      error: data.error,
-      duration_ms: data.duration_ms,
-      timestamp: getFormattedTime(),
-      status: data.success ? 'success' : 'error',
+  // Window resize handler
+  useEffect(() => {
+    const handleResize = () => {
+      editorPanelRef.current?.layout();
+      terminalPanelRef.current?.fitActiveTerminal();
     };
 
-    setReplEntries((prev) => [...prev, newResult]);
-    setIsReplOpen(true);
-  }, []);
-
-  // Direct evaluation from REPL panel input prompt
-  const handleReplDirectEval = useCallback(
-    async (code: string) => {
-      const startTime = performance.now();
-      try {
-        const res = await fetch('/api/eval', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code }),
-        });
-        const duration = Math.round(performance.now() - startTime);
-        if (res.ok) {
-          const data = await res.json();
-          const isSuccess = data.ok === true || data.success === true;
-          handleEvalResult({
-            code,
-            result: data.result || '',
-            stdout: data.stdout || '',
-            stderr: data.stderr || '',
-            error: isSuccess ? undefined : (data.stderr || data.error || 'Evaluation error'),
-            duration_ms: data.duration_ms ?? duration,
-            success: isSuccess,
-          });
-        } else {
-          const errText = await res.text();
-          handleEvalResult({
-            code,
-            error: `Server HTTP ${res.status}: ${errText}`,
-            duration_ms: duration,
-            success: false,
-          });
-        }
-      } catch (err: any) {
-        const duration = Math.round(performance.now() - startTime);
-        handleEvalResult({
-          code,
-          error: `Network/Connection Error: ${err.message || 'Cannot connect to /api/eval'}`,
-          duration_ms: duration,
-          success: false,
-        });
-      }
-    },
-    [handleEvalResult]
-  );
-
-  // Toolbar action handlers
-  const handleRunEval = useCallback(() => {
-    editorRef.current?.triggerShortcut('eval_repl');
-  }, []);
-
-  const handleResetCode = useCallback(() => {
-    if (window.confirm('Reset editor to default Scheme sample code?')) {
-      editorRef.current?.setContent(DEFAULT_SCHEME_CODE);
-    }
-  }, []);
-
-  const handleIndent = useCallback(() => {
-    editorRef.current?.triggerShortcut('indent');
-  }, []);
-
-  const handleTriggerFromHud = useCallback((id: ShortcutId) => {
-    editorRef.current?.triggerShortcut(id);
-    editorRef.current?.focus();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#1a1b26] text-[#c0caf5]">
-      {/* Top Header */}
-      <Header
-        parinferMode={parinferMode}
-        onParinferModeChange={setParinferMode}
-        serverStatus={serverStatus}
-        onRunEval={handleRunEval}
-        onResetCode={handleResetCode}
-        onIndent={handleIndent}
-        showHud={showHud}
-        onToggleHud={() => setShowHud((v) => !v)}
-      />
+    <div
+      ref={containerRef}
+      className="flex h-screen w-screen overflow-hidden bg-[#1a1b26] text-[#c0caf5] select-none"
+    >
+      {/* Full-screen mouse capture overlay while dragging divider */}
+      {isDragging && (
+        <div className="fixed inset-0 z-50 cursor-col-resize select-none pointer-events-auto" />
+      )}
 
-      {/* Main Workspace Body */}
-      <div className="flex-1 flex overflow-hidden relative">
-        {/* Left / Center Area: Monaco Editor + Bottom REPL */}
-        <div className="flex-1 flex flex-col h-full overflow-hidden">
-          {/* Monaco Editor Container */}
-          <div className="flex-1 relative overflow-hidden">
-            <MonacoEditor
-              ref={editorRef}
-              initialCode={DEFAULT_SCHEME_CODE}
-              parinferMode={parinferMode}
-              onShortcutTriggered={handleShortcutTriggered}
-              onEvalResult={handleEvalResult}
-            />
-          </div>
-
-          {/* Bottom REPL Panel */}
-          <ReplPanel
-            entries={replEntries}
-            serverStatus={serverStatus}
-            onClear={() => setReplEntries([])}
-            isOpen={isReplOpen}
-            onToggle={() => setIsReplOpen((v) => !v)}
-            onEval={handleReplDirectEval}
+      {/* Left Code Editor Panel */}
+      {isEditorOpen && (
+        <div
+          style={{ width: `${splitRatio * 100}%` }}
+          className={`h-full overflow-hidden flex flex-col bg-[#1a1b26] shrink-0 ${
+            isDragging ? 'transition-none' : 'transition-[width] duration-150 ease-out'
+          }`}
+        >
+          <EditorPanel
+            ref={editorPanelRef}
+            openFiles={openFiles}
+            activeFilePath={activeFilePath}
+            onSelectTab={setActiveFilePath}
+            onCloseTab={closeFile}
+            onNewFile={handleNewScratchFile}
+            onCodeChange={handleCodeChange}
+            onSendToRepl={handleSendToRepl}
+            onSaveActiveFile={handleSaveActiveFile}
+            parinferMode={parinferMode}
           />
         </div>
+      )}
 
-        {/* Right Sidebar: Interactive HUD CheatSheet */}
-        {showHud && (
-          <HudSidebar
-            activeFlashId={activeFlashId}
-            history={history}
-            onTriggerShortcut={handleTriggerFromHud}
-            onClearHistory={() => setHistory([])}
-          />
-        )}
+      {/* Draggable Divider (visible when editor is open) */}
+      {isEditorOpen && (
+        <div
+          onMouseDown={startDragging}
+          className="w-[4px] h-full bg-[#1e2030] hover:bg-[#7aa2f7] active:bg-[#7aa2f7] cursor-col-resize transition-colors select-none z-10 shrink-0"
+          title="Drag to resize split ratio"
+        />
+      )}
+
+      {/* Right Terminal Panel */}
+      <div
+        style={{ width: isEditorOpen ? `${(1 - splitRatio) * 100}%` : '100%' }}
+        className={`h-full overflow-hidden flex flex-col bg-[#1a1b26] flex-1 ${
+          isDragging ? 'transition-none' : 'transition-[width] duration-150 ease-out'
+        }`}
+      >
+        <TerminalPanel
+          ref={terminalPanelRef}
+          onGuiAction={handleGuiAction}
+        />
       </div>
     </div>
   );
 };
+
 export default App;

@@ -6,6 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+pub mod file_api;
+pub mod terminal;
+
 use axum::{
     extract::State,
     http::{header, StatusCode},
@@ -143,6 +146,7 @@ pub struct AppState {
     pub static_dir: Option<PathBuf>,
     pub repl: Arc<tokio::sync::Mutex<Option<SteelReplProcess>>>,
     pub eval_counter: Arc<AtomicU64>,
+    pub gui_broadcast: tokio::sync::broadcast::Sender<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -856,7 +860,13 @@ pub fn create_app(state: Arc<AppState>) -> Router {
     let router = Router::new()
         .route("/api/health", get(health_handler))
         .route("/api/eval", post(eval_handler))
-        .route("/api/reset", post(reset_handler));
+        .route("/api/reset", post(reset_handler))
+        .route(
+            "/api/file",
+            get(file_api::read_file_handler).post(file_api::write_file_handler),
+        )
+        .route("/api/gui", post(file_api::gui_action_handler))
+        .route("/ws/terminal", get(terminal::ws_terminal_handler));
 
     let router = if let Some(ref dir) = state.static_dir {
         let index_path = dir.join("index.html");
@@ -890,12 +900,15 @@ async fn main() {
         steel_bin, steel_version, static_dir
     );
 
+    let (gui_broadcast, _) = tokio::sync::broadcast::channel(100);
+
     let state = Arc::new(AppState {
         steel_bin,
         steel_version,
         static_dir,
         repl: Arc::new(tokio::sync::Mutex::new(None)),
         eval_counter: Arc::new(AtomicU64::new(1)),
+        gui_broadcast,
     });
 
     let port: u16 = std::env::var("PORT")
@@ -932,12 +945,14 @@ mod tests {
     fn test_app() -> Router {
         let steel_bin = find_steel_binary();
         let steel_version = detect_steel_version(&steel_bin);
+        let (gui_broadcast, _) = tokio::sync::broadcast::channel(100);
         let state = Arc::new(AppState {
             steel_bin,
             steel_version,
             static_dir: None,
             repl: Arc::new(tokio::sync::Mutex::new(None)),
             eval_counter: Arc::new(AtomicU64::new(1)),
+            gui_broadcast,
         });
         create_app(state)
     }
@@ -1312,5 +1327,307 @@ mod tests {
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8_lossy(&body);
         assert!(html.contains("Scheme Editor Backend"));
+    }
+
+    #[test]
+    fn test_gui_command_parsing() {
+        use crate::terminal::handle_gui_command;
+
+        // Help
+        let (fb, action) = handle_gui_command("gui help");
+        assert!(fb.contains("[GUI] Action: help") || fb.contains("[GUI]"));
+        assert!(fb.contains("gui open"));
+        assert!(action.is_none());
+
+        let (fb, action) = handle_gui_command("gui");
+        assert!(fb.contains("gui open"));
+        assert!(action.is_none());
+
+        // Open & Edit
+        let (fb, action) = handle_gui_command("gui open foo.scm");
+        assert!(fb.contains("Action: open foo.scm"));
+        assert_eq!(
+            action.unwrap(),
+            serde_json::json!({ "type": "gui_action", "action": "open", "file": "foo.scm" })
+        );
+
+        let (fb, action) = handle_gui_command("gui edit \"src/main.rs\"");
+        assert!(fb.contains("Action: open src/main.rs"));
+        assert_eq!(
+            action.unwrap(),
+            serde_json::json!({ "type": "gui_action", "action": "open", "file": "src/main.rs" })
+        );
+
+        // Close
+        let (fb, action) = handle_gui_command("gui close");
+        assert!(fb.contains("Action: close"));
+        assert_eq!(
+            action.unwrap(),
+            serde_json::json!({ "type": "gui_action", "action": "close", "file": "" })
+        );
+
+        let (fb, action) = handle_gui_command("gui close test.scm");
+        assert!(fb.contains("Action: close test.scm"));
+        assert_eq!(
+            action.unwrap(),
+            serde_json::json!({ "type": "gui_action", "action": "close", "file": "test.scm" })
+        );
+
+        // Ratio
+        let (fb, action) = handle_gui_command("gui ratio 60:40");
+        assert!(fb.contains("Action: ratio 60:40"));
+        assert_eq!(
+            action.unwrap(),
+            serde_json::json!({ "type": "gui_action", "action": "ratio", "left": 60, "right": 40 })
+        );
+
+        let (fb, action) = handle_gui_command("gui ratio 70/30");
+        assert!(fb.contains("Action: ratio 70:30"));
+        assert_eq!(
+            action.unwrap(),
+            serde_json::json!({ "type": "gui_action", "action": "ratio", "left": 70, "right": 30 })
+        );
+
+        // Unknown
+        let (fb, action) = handle_gui_command("gui foobar");
+        assert!(fb.contains("unknown command"));
+        assert!(action.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_file_api_endpoints() {
+        let app = test_app();
+
+        // 1. Write a temporary file via POST /api/file
+        let write_payload = serde_json::json!({
+            "path": "test_artifacts/example.scm",
+            "content": "(define (greet name) (string-append \"Hello, \" name))"
+        });
+        let req = Request::builder()
+            .uri("/api/file")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&write_payload).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let write_resp: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(write_resp["ok"], true);
+
+        // 2. Read the file back via GET /api/file?path=...
+        let req = Request::builder()
+            .uri("/api/file?path=test_artifacts/example.scm")
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let read_resp: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(read_resp["ok"], true);
+        assert_eq!(
+            read_resp["content"],
+            "(define (greet name) (string-append \"Hello, \" name))"
+        );
+
+        // 3. Read a non-existent file
+        let req = Request::builder()
+            .uri("/api/file?path=does_not_exist_12345.xyz")
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let err_resp: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err_resp["ok"], false);
+
+        // Clean up written test file
+        let _ = tokio::fs::remove_dir_all(crate::file_api::resolve_path("test_artifacts")).await;
+        let _ = tokio::fs::remove_dir_all("test_artifacts").await;
+    }
+
+    #[tokio::test]
+    async fn test_gui_api_endpoint() {
+        let steel_bin = find_steel_binary();
+        let steel_version = detect_steel_version(&steel_bin);
+        let (gui_broadcast, _) = tokio::sync::broadcast::channel(100);
+        let mut rx = gui_broadcast.subscribe();
+
+        let state = Arc::new(AppState {
+            steel_bin,
+            steel_version,
+            static_dir: None,
+            repl: Arc::new(tokio::sync::Mutex::new(None)),
+            eval_counter: Arc::new(AtomicU64::new(1)),
+            gui_broadcast,
+        });
+        let app = create_app(state);
+
+        // POST /api/gui with open
+        let req = Request::builder()
+            .uri("/api/gui")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"cmd": "open", "args": ["demo.scm"]}"#))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let broadcast_msg = rx.recv().await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&broadcast_msg).unwrap();
+        assert_eq!(parsed["type"], "gui_action");
+        assert_eq!(parsed["action"], "open");
+        assert_eq!(parsed["file"], "demo.scm");
+
+        // POST /api/gui with ratio
+        let req = Request::builder()
+            .uri("/api/gui")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"cmd": "ratio", "args": ["65:35"]}"#))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let broadcast_msg2 = rx.recv().await.unwrap();
+        let parsed2: serde_json::Value = serde_json::from_str(&broadcast_msg2).unwrap();
+        assert_eq!(parsed2["type"], "gui_action");
+        assert_eq!(parsed2["action"], "ratio");
+        assert_eq!(parsed2["left"], 65);
+        assert_eq!(parsed2["right"], 35);
+    }
+
+    #[test]
+    fn test_spawn_pty_bash() {
+        use std::io::{Read, Write};
+        let (master, mut child) = crate::terminal::spawn_pty("bash", Path::new("steel"), Path::new(".")).unwrap();
+        let mut reader = master.try_clone_reader().unwrap();
+        let mut writer = master.take_writer().unwrap();
+
+        writeln!(writer, "echo PTY_ECHO_TEST_SUCCESS").unwrap();
+        writer.flush().unwrap();
+
+        let mut output = Vec::new();
+        let mut buf = [0u8; 1024];
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(3) {
+            if let Ok(n) = reader.read(&mut buf) {
+                if n > 0 {
+                    output.extend_from_slice(&buf[..n]);
+                    let s = String::from_utf8_lossy(&output);
+                    if s.contains("PTY_ECHO_TEST_SUCCESS") {
+                        break;
+                    }
+                }
+            }
+        }
+        let s = String::from_utf8_lossy(&output);
+        assert!(s.contains("PTY_ECHO_TEST_SUCCESS"));
+        let _ = child.kill();
+    }
+
+    #[test]
+    fn test_spawn_pty_steel() {
+        use std::io::{Read, Write};
+        let steel_bin = find_steel_binary();
+        let (master, mut child) = crate::terminal::spawn_pty("steel", &steel_bin, Path::new(".")).unwrap();
+        let mut reader = master.try_clone_reader().unwrap();
+        let mut writer = master.take_writer().unwrap();
+
+        writeln!(writer, "(+ 123 456)").unwrap();
+        writer.flush().unwrap();
+
+        let mut output = Vec::new();
+        let mut buf = [0u8; 1024];
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(3) {
+            if let Ok(n) = reader.read(&mut buf) {
+                if n > 0 {
+                    output.extend_from_slice(&buf[..n]);
+                    let s = String::from_utf8_lossy(&output);
+                    if s.contains("579") {
+                        break;
+                    }
+                }
+            }
+        }
+        let s = String::from_utf8_lossy(&output);
+        assert!(s.contains("579"), "Expected Steel REPL output to evaluate (+ 123 456) to 579, got: {}", s);
+        let _ = child.kill();
+    }
+
+    #[tokio::test]
+    async fn test_ws_terminal_full_integration() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
+
+        let steel_bin = find_steel_binary();
+        let steel_version = detect_steel_version(&steel_bin);
+        let (gui_broadcast, _) = tokio::sync::broadcast::channel(100);
+
+        let state = Arc::new(AppState {
+            steel_bin,
+            steel_version,
+            static_dir: None,
+            repl: Arc::new(tokio::sync::Mutex::new(None)),
+            eval_counter: Arc::new(AtomicU64::new(1)),
+            gui_broadcast,
+        });
+        let app = create_app(state);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let ws_url = format!("ws://{}/ws/terminal?tab_id=test_tab&cmd=bash", addr);
+        let (mut ws_stream, _) = tokio_tungstenite::connect_async(&ws_url).await.unwrap();
+
+        // Send resize message
+        ws_stream
+            .send(TungsteniteMessage::Text(
+                r#"{"type": "resize", "cols": 120, "rows": 40}"#.to_string(),
+            ))
+            .await
+            .unwrap();
+
+        // Send intercepted gui command: gui open test_live.scm\r
+        ws_stream
+            .send(TungsteniteMessage::Text("gui open test_live.scm\r".to_string()))
+            .await
+            .unwrap();
+
+        let start = Instant::now();
+        let mut got_gui_feedback = false;
+        let mut got_gui_broadcast = false;
+
+        while start.elapsed() < Duration::from_secs(4) {
+            match tokio::time::timeout(Duration::from_millis(500), ws_stream.next()).await {
+                Ok(Some(Ok(msg))) => match msg {
+                    TungsteniteMessage::Binary(bin) => {
+                        let s = String::from_utf8_lossy(&bin);
+                        if s.contains("[GUI]") && s.contains("test_live.scm") {
+                            got_gui_feedback = true;
+                        }
+                    }
+                    TungsteniteMessage::Text(txt) => {
+                        if txt.contains("gui_action") && txt.contains("test_live.scm") {
+                            got_gui_broadcast = true;
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+            if got_gui_feedback && got_gui_broadcast {
+                break;
+            }
+        }
+
+        assert!(got_gui_feedback, "Should have received formatted GUI feedback in terminal stream");
+        assert!(got_gui_broadcast, "Should have received JSON gui_action broadcast on WebSocket");
     }
 }

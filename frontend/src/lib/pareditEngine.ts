@@ -358,7 +358,8 @@ export function expandSelection(editor: monaco.editor.IStandaloneCodeEditor): { 
  */
 export async function evalRepl(
   editor: monaco.editor.IStandaloneCodeEditor,
-  onEvalResult?: (data: { code: string; result?: string; stdout?: string; stderr?: string; error?: string; duration_ms: number; success: boolean }) => void
+  onEvalResult?: (data: { code: string; result?: string; stdout?: string; stderr?: string; error?: string; duration_ms: number; success: boolean }) => void,
+  onSendToRepl?: (code: string) => void
 ): Promise<{ success: boolean; detail?: string }> {
   const model = editor.getModel();
   if (!model) return { success: false, detail: 'No model' };
@@ -432,6 +433,16 @@ export async function evalRepl(
     setTimeout(() => {
       collection.clear();
     }, 350);
+  }
+
+  // If onSendToRepl callback is provided, route directly to Terminal Tab 1 ("λ REPL")
+  if (onSendToRepl) {
+    onSendToRepl(trimmed);
+    const preview = trimmed.length > 30 ? trimmed.slice(0, 30) + '...' : trimmed;
+    return {
+      success: true,
+      detail: `Sent to λ REPL: ${preview}`,
+    };
   }
 
   // Execute POST to /api/eval with code and buffer context
@@ -1339,13 +1350,14 @@ export function splitSexp(editor: monaco.editor.IStandaloneCodeEditor): { succes
 export async function dispatchShortcut(
   id: ShortcutId,
   editor: monaco.editor.IStandaloneCodeEditor,
-  onEvalResult?: (data: any) => void
+  onEvalResult?: (data: any) => void,
+  onSendToRepl?: (code: string) => void
 ): Promise<{ success: boolean; detail?: string }> {
   switch (id) {
     case 'expand':
       return expandSelection(editor);
     case 'eval_repl':
-      return evalRepl(editor, onEvalResult);
+      return evalRepl(editor, onEvalResult, onSendToRepl);
     case 'wrap_parens':
       return wrapParens(editor);
     case 'wrap_square':

@@ -1,8 +1,9 @@
-# Scheme Strict Paredit Editor & Tester
+# Scheme Strict Paredit Hacker IDE
 
-一个基于 **Monaco Editor**、**Paredit.js**、**Parinfer** 与 **Rust (Axum + 常驻 Steel REPL)** 的现代化 Scheme 编辑器与快捷键测试环境。
+一个专为极致 Scheme 编程体验而生的**极简黑客生产力 IDE**。
+结合了 **Monaco Editor**、**Strict Paredit**、**Parinfer**、**真实 PTY 统一终端 (Steel REPL + Bash)** 与 **零依赖终端 GUI 拦截系统**。
 
-专为严格测试 [`docs/strict_paredit_guide.md`](docs/strict_paredit_guide.md) 中定义的 **17 个单发（One-Shot）极速快捷键** 而设计。
+专为高效生产与严格测试 [`docs/strict_paredit_guide.md`](docs/strict_paredit_guide.md) 中定义的 **17 个单发（One-Shot）极速快捷键** 而设计。
 
 ---
 
@@ -18,34 +19,67 @@
 
 打开浏览器访问：
 * 本机 / 端口转发访问：**`http://localhost:3000`**
-* 宿主机 (Mac) 浏览器直连：**`http://192.168.64.3:3000`**（根据虚拟机 IP 直连）
+* 宿主机 (Mac) 浏览器直连：**`http://192.168.64.3:3000`**（自动探测虚拟机 IP）
 * 或在 VS Code 底部「端口 (PORTS)」面板添加转发 `3000` 端口后访问 `http://localhost:3000`。
 
 ---
 
-## ✨ 核心特性
+## 🖥️ 极简 IDE 交互架构
 
-1. **17 个 Strict Paredit 专属快捷键全覆盖**：
-   - 包含向外扩选、向内收缩、发射求值、圆/方括号包裹、吞噬/吐出、脱壳解包、顶级函数选择、前进后退、深度钻入、向上跳出、整块删除、智能缩进、参数对调与列表切分。
-   - 右手全面构建在 **`H-J-K-L` 四轴八态主键矩阵**，彻底脱离 macOS 全部 5 大系统死键（`E, U, I, N, ~`），无论输入法何种状态均 100% 免疫死键拦截与字符泄漏！
-   - Monaco 与全局事件双层拦截，解决浏览器菜单抢焦与系统默认快捷键冲突。
-2. **实时 HUD 快捷键闪烁看板（Flash Effect）**：
-   * 右侧常驻 17 键交互看板（按 5 星至 1 星频率排序）。
-   * 键盘按下任意对应快捷键时，看板上对应卡片产生高亮发光动效（Glow Flash），并在底部记录精确到毫秒的操作日志。
-3. **工业级常驻 Steel Scheme REPL 引擎**：
-   * 原生 Rust 后端运行常驻 **Steel Scheme 0.8.2** 解释器，单次求值耗时仅 **5~7ms**。
-   * **全局状态持久化**：`define` 函数/变量、`set!` 状态修改、闭包与 `define-syntax` 宏定义在内存会话中持久保留。
-   * **按需依赖隔离**：自动分析直接与间接引用依赖，绝不会受到文件中其他未完成练习或语法草稿的污染。
-   * **REPL 交互式命令行**：底部 REPL 面板提供专用的 `λ >` 输入行，支持直接键入回车求值，并支持键盘 `↑` / `↓` 浏览历史指令。
-   * **双重安全防护**：0ms 未闭合括号语法即时拦截，5 秒超时自动熔断保护。
-4. **Parinfer 智能/括号双模**：
-   * 顶部工具栏支持在 **Paren Mode**（默认保护结构）、**Smart Mode** 与 **关闭** 之间无缝切换。
-5. **Rust 高性能静态服务器**：
-   * 编译为原生 Release 二进制（`server/target/release/server`），内存占用低，托管前端静态资源并提供 CORS 支持与 SPA fallback。
+### 1. 冷启动全屏终端 (Cold Start 100%)
+* 页面初始打开时，呈现**极简 100% 全宽终端工作区**，去除所有多余的状态栏、顶栏和侧边栏。
+* **Tab 1（λ REPL）**：常驻的原生 Steel Scheme 交互式终端（真实 PTY，运行 `steel` 0.8.2），固定在第一项，不可关闭。
+* **Tab 2+（Bash）**：独立的 Linux Bash 会话（真实 PTY），支持自由通过 `+` 新建或 `×` 关闭。
+
+### 2. 动态展屏与文件打开 (`gui open`)
+* 在任意 Bash 终端中输入内置拦截命令打开或编辑文件：
+  ```bash
+  gui open sample.scm
+  # 或简写
+  gui edit src/math.scm
+  ```
+* 左侧多标签代码编辑区瞬间**自动滑出展开**，默认按 **60 : 40** 黄金比例分屏呈现。
+* Monaco 编辑器立即载入文件，并在顶部标签栏高亮显示。
+
+### 3. 动态折叠 (Dynamic Collapse)
+* 当左侧编辑区的所有文件标签被全部关闭时，左侧编辑区自动**平滑折叠回 0% 宽度**，右侧终端重新回归 100% 全屏，还原最纯粹的终端生产力模式。
+
+### 4. 自由分屏调节
+* 编辑区与终端区之间设有 **4px 极窄可拖拽分割条**，悬停高亮提示，拖动即可按像素级自由调节左右比例。
+* 也可在终端中直接使用命令调整分屏：
+  ```bash
+  gui ratio 70:30
+  gui ratio 50:50
+  gui ratio 0:100   # 隐藏左侧编辑区
+  ```
+
+### 5. Monaco 代码发射与 REPL 自动聚焦联动
+* 在左侧代码编辑区编写 Scheme 代码时：
+  * 按下 **`Alt + Enter`** 或 **`Ctrl + Enter`**（Mac: `⌥ ↵` 或 `⌘ ↵`）。
+  * 系统自动提取光标所在的最内层有效 S-expression（或选中范围）。
+  * **右侧终端自动平滑切换至 Tab 1 (`λ REPL`)**。
+  * 将代码直接注入 Steel PTY 的标准输入并回车执行。
+  * REPL 终端自动平滑滚动至最底部最新求值气泡，实现零心智负担的所写即所见。
 
 ---
 
-## ⌨️ 17 个快捷键速查表
+## ⚡ 终端 CLI `gui` 命令集 (零依赖无感拦截)
+
+后端在 PTY 字节流层自动拦截识别，**无需在系统安装任何外部软件包或全局脚本**，绝不触发 `bash: command not found`：
+
+| 命令 | 说明 | 示例 |
+| :--- | :--- | :--- |
+| `gui open <file>` | 在左侧编辑区打开指定文件 | `gui open fib.scm` |
+| `gui edit <file>` | `gui open` 的别名 | `gui edit tests/test.scm` |
+| `gui close [file]` | 关闭当前或指定文件标签页 | `gui close fib.scm` |
+| `gui ratio <L:R>` | 调整左侧编辑器与右侧终端比例 | `gui ratio 70:30` |
+| `gui help` | 显示 gui 命令帮助菜单 | `gui help` |
+
+---
+
+## ⌨️ 17 个 Strict Paredit 快捷键速查表
+
+全套快捷键全面构建在右手 **`H-J-K-L` 四轴八态主键矩阵**，彻底脱离 macOS 全部 5 大系统死键（`E, U, I, N, ~`），无论输入法何种状态均 100% 免疫死键拦截与字符泄漏！
 
 | 频级 | Windows / Linux | macOS (⌥ Option) | 命令动作 | 功能说明 |
 | :--- | :--- | :--- | :--- | :--- |
@@ -69,21 +103,33 @@
 
 ---
 
-## 📚 详细文档
+## 🧪 自动化测试套件
 
-* [Strict Paredit 极速快捷键设计手册](docs/strict_paredit_guide.md)
-* [Strict Paredit 互动实战训练手册](docs/strict_paredit_training_manual.md)
+本仓库包含全套单元测试与前后端集成测试：
+
+1. **前端快捷键与交互集成测试（31 项全绿）**：
+   ```bash
+   cd frontend && npm test
+   # 包含：
+   # - testShortcuts.js (18 项 Strict Paredit 快捷键逻辑)
+   # - testFrontendIntegration.js (13 项冷启动、动态展开/折叠、比例计算、CLI 命令解析与 Monaco Sexp 提取)
+   ```
+
+2. **后端 Rust 单元与端到端测试（25 项全绿）**：
+   ```bash
+   cd server && cargo test
+   # 包含：
+   # - Steel PTY 与 Bash PTY 生命周期与双向流
+   # - WebSocket 终端全链路集成测试
+   # - CLI gui 命令解析与拦截测试
+   # - 文件读取与写入 API 测试
+   # - HTTP Eval 与会话持久化测试
+   ```
 
 ---
 
-## 🧪 自动化测试
+## 📚 详细设计与使用文档
 
-前端快捷键逻辑测试套件（18 项）：
-```bash
-cd frontend && npm test
-```
-
-后端 Rust 单元与集成测试套件（19 项）：
-```bash
-cd server && cargo test
-```
+* [终端黑客 IDE 架构与通信协议设计手册](docs/terminal_ide_architecture.md)
+* [Strict Paredit 极速快捷键设计手册](docs/strict_paredit_guide.md)
+* [Strict Paredit 互动实战训练手册](docs/strict_paredit_training_manual.md)

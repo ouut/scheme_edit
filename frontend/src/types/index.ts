@@ -55,3 +55,25 @@ export interface EvalResultEntry {
 }
 
 export type ServerStatus = 'connected' | 'ready' | 'error';
+
+export interface OpenFile {
+  path: string;
+  name: string;
+  content: string;
+  savedContent: string;
+  isModified: boolean;
+}
+
+export interface TerminalTabItem {
+  id: string;
+  title: string;
+  cmd: 'steel' | 'bash';
+  closable: boolean;
+}
+
+export interface GuiActionPayload {
+  action: 'open' | 'close' | 'ratio';
+  file?: string;
+  left?: number;
+  right?: number;
+}

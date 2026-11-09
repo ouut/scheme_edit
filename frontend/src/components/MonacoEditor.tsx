@@ -51,10 +51,12 @@ export interface MonacoEditorHandle {
   setContent: (content: string) => void;
   triggerShortcut: (id: ShortcutId) => Promise<void>;
   getEditor: () => monaco.editor.IStandaloneCodeEditor | null;
+  layout: () => void;
 }
 
 interface MonacoEditorProps {
   initialCode: string;
+  filePath?: string;
   parinferMode: ParinferMode;
   onCodeChange?: (code: string) => void;
   onShortcutTriggered?: (id: ShortcutId, detail: string, success: boolean) => void;
@@ -67,21 +69,27 @@ interface MonacoEditorProps {
     duration_ms: number;
     success: boolean;
   }) => void;
+  onSendToRepl?: (code: string) => void;
+  onSave?: () => void;
 }
 
 export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
   (
     {
       initialCode,
+      filePath,
       parinferMode,
       onCodeChange,
       onShortcutTriggered,
       onEvalResult,
+      onSendToRepl,
+      onSave,
     },
     ref
   ) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+    const modelsMapRef = useRef<Map<string, monaco.editor.ITextModel>>(new Map());
     const parinferModeRef = useRef<ParinferMode>(parinferMode);
     parinferModeRef.current = parinferMode;
 
@@ -94,15 +102,28 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
     const onEvalResultRef = useRef(onEvalResult);
     onEvalResultRef.current = onEvalResult;
 
-    // Helper to execute shortcut and notify HUD
+    const onSendToReplRef = useRef(onSendToRepl);
+    onSendToReplRef.current = onSendToRepl;
+
+    const onSaveRef = useRef(onSave);
+    onSaveRef.current = onSave;
+
+    // Helper to execute shortcut and notify HUD / REPL
     const executeAction = useCallback(
       async (id: ShortcutId) => {
         const editor = editorRef.current;
         if (!editor) return;
 
-        const res = await dispatchShortcut(id, editor, (evalData) => {
-          onEvalResultRef.current?.(evalData);
-        });
+        const res = await dispatchShortcut(
+          id,
+          editor,
+          (evalData) => {
+            onEvalResultRef.current?.(evalData);
+          },
+          (code) => {
+            onSendToReplRef.current?.(code);
+          }
+        );
 
         onShortcutTriggeredRef.current?.(
           id,
@@ -141,7 +162,43 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         await executeAction(id);
       },
       getEditor: () => editorRef.current,
+      layout: () => {
+        editorRef.current?.layout();
+      },
     }));
+
+    // Switch model when filePath changes
+    useEffect(() => {
+      const editor = editorRef.current;
+      if (!editor || !filePath) return;
+
+      let model = modelsMapRef.current.get(filePath);
+      if (!model || model.isDisposed()) {
+        const uri = monaco.Uri.parse(`inmemory://scheme/${filePath}`);
+        model = monaco.editor.getModel(uri) || monaco.editor.createModel(initialCode, SCHEME_LANGUAGE_ID, uri);
+        modelsMapRef.current.set(filePath, model);
+      }
+      if (editor.getModel() !== model) {
+        editor.setModel(model);
+      }
+    }, [filePath]);
+
+    // Synchronize initialCode if updated externally
+    useEffect(() => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const model = editor.getModel();
+      if (model && model.getValue() !== initialCode && !editor.hasWidgetFocus()) {
+        withParinferLock(() => {
+          editor.executeEdits('externalSync', [
+            {
+              range: model.getFullModelRange(),
+              text: initialCode,
+            },
+          ]);
+        });
+      }
+    }, [initialCode]);
 
     // Initialize Monaco instance
     useEffect(() => {
@@ -290,6 +347,14 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
       editor.addCommand(
         monaco.KeyMod.Alt | monaco.KeyCode.Enter,
         () => executeAction('eval_repl')
+      );
+
+      // Ctrl + S / Cmd + S : Save file immediately
+      editor.addCommand(
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+        () => {
+          onSaveRef.current?.();
+        }
       );
 
       // 3. Alt + H : 圆括号包裹 (Wrap Parens, 兼顾 Alt+U/P)
