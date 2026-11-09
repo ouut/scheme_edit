@@ -217,14 +217,22 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
       }
     }, [filePath]);
 
-    // Initialize Monaco instance
+    // Initialize Monaco instance once on mount
     useEffect(() => {
       if (!containerRef.current) return;
 
+      let initialModel: monaco.editor.ITextModel | null = null;
+      if (filePath) {
+        const langId = getLanguageForPath(filePath);
+        const uri = monaco.Uri.parse(`inmemory://workspace/${encodeURIComponent(filePath)}`);
+        initialModel = monaco.editor.getModel(uri) || monaco.editor.createModel(initialCode, langId, uri);
+        modelsMapRef.current.set(filePath, initialModel);
+        previousFilePathRef.current = filePath;
+      }
+
       const initialLang = getLanguageForPath(filePath);
       const editor = monaco.editor.create(containerRef.current, {
-        value: initialCode,
-        language: initialLang,
+        model: initialModel || monaco.editor.createModel(initialCode, initialLang),
         theme: TOKYO_NIGHT_THEME_ID,
         bracketPairColorization: {
           enabled: true,
@@ -784,7 +792,7 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         editor.dispose();
         editorRef.current = null;
       };
-    }, [executeAction, initialCode]);
+    }, []); // Mount once: do not recreate or dispose editor when content changes!
 
     return (
       <div className="flex-1 w-full h-full relative overflow-hidden bg-[#1a1b26]">
