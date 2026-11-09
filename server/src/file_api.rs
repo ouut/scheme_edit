@@ -134,6 +134,11 @@ pub async fn gui_action_handler(
                 .file
                 .or_else(|| payload.args.first().cloned())
                 .unwrap_or_default();
+            let file = if file.trim().is_empty() {
+                crate::terminal::find_next_scratch_file()
+            } else {
+                file
+            };
             serde_json::json!({
                 "type": "gui_action",
                 "action": "open",

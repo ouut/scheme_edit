@@ -134,11 +134,16 @@ export const App: React.FC = () => {
           }
         }
 
+        let finalContent = content || '';
+        if (!finalContent && cleanPath.startsWith('scratch-') && cleanPath.endsWith('.scm')) {
+          finalContent = ';; Scheme Scratch Buffer\n';
+        }
+
         const newFile: OpenFile = {
           path: cleanPath,
           name: cleanPath.split('/').pop() || cleanPath,
-          content: content || '',
-          savedContent: content || '',
+          content: finalContent,
+          savedContent: finalContent,
           isModified: false,
         };
 
@@ -190,12 +195,18 @@ export const App: React.FC = () => {
     []
   );
 
-  // Create new scratch buffer
+  // Create new scratch buffer (scratch-N.scm)
   const handleNewScratchFile = useCallback(() => {
-    const filename = `scratch-${scratchCounter}.scm`;
-    setScratchCounter((c) => c + 1);
-    openFile(filename, ';; Scheme Scratch Buffer\n');
-  }, [scratchCounter, openFile]);
+    setOpenFiles((prev) => {
+      let counter = 1;
+      while (prev.some((f) => f.path === `scratch-${counter}.scm`)) {
+        counter++;
+      }
+      const filename = `scratch-${counter}.scm`;
+      openFile(filename, ';; Scheme Scratch Buffer\n');
+      return prev;
+    });
+  }, [openFile]);
 
   // Alt+Enter / Ctrl+Enter: Send selected or current S-expression to Tab 1 ("λ REPL")
   const handleSendToRepl = useCallback((code: string) => {
@@ -228,8 +239,13 @@ export const App: React.FC = () => {
       }
       lastGuiActionRef.current = { key: actionKey, time: now };
 
-      if (payload.action === 'open' && payload.file) {
-        openFile(payload.file);
+      if (payload.action === 'open') {
+        const target = payload.file?.trim();
+        if (target) {
+          openFile(target);
+        } else {
+          handleNewScratchFile();
+        }
       } else if (payload.action === 'close') {
         if (payload.file) {
           closeFile(payload.file);

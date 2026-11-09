@@ -1351,6 +1351,21 @@ mod tests {
             serde_json::json!({ "type": "gui_action", "action": "open", "file": "foo.scm" })
         );
 
+        // Empty gui open / gui edit defaults to scratch-*.scm
+        let (fb, action) = handle_gui_command("gui open");
+        assert!(fb.contains("Action: open scratch-"));
+        let act = action.unwrap();
+        assert_eq!(act["type"], "gui_action");
+        assert_eq!(act["action"], "open");
+        assert!(act["file"].as_str().unwrap().starts_with("scratch-"));
+        assert!(act["file"].as_str().unwrap().ends_with(".scm"));
+
+        let (fb, action) = handle_gui_command("gui edit");
+        assert!(fb.contains("Action: open scratch-"));
+        let act = action.unwrap();
+        assert_eq!(act["action"], "open");
+        assert!(act["file"].as_str().unwrap().starts_with("scratch-"));
+
         let (fb, action) = handle_gui_command("gui edit \"src/main.rs\"");
         assert!(fb.contains("Action: open src/main.rs"));
         assert_eq!(

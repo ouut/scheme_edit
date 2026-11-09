@@ -68,6 +68,30 @@ pub fn spawn_pty(
     Ok((pair.master, child))
 }
 
+pub fn find_next_scratch_file() -> String {
+    let workspace = std::env::var("WORKSPACE_DIR").unwrap_or_else(|_| {
+        let def = PathBuf::from("/workspace/scheme_edit");
+        if def.exists() {
+            def.to_string_lossy().to_string()
+        } else {
+            ".".to_string()
+        }
+    });
+    let workspace_path = Path::new(&workspace);
+    let mut n = 1;
+    loop {
+        let name = format!("scratch-{}.scm", n);
+        let candidate = workspace_path.join(&name);
+        if !candidate.exists() {
+            return name;
+        }
+        n += 1;
+        if n >= 1000 {
+            return name;
+        }
+    }
+}
+
 /// Parse and handle an intercepted GUI command line (e.g. "gui open foo.scm")
 /// Returns (formatted_terminal_feedback, optional_broadcast_json)
 pub fn handle_gui_command(line: &str) -> (String, Option<serde_json::Value>) {
@@ -76,8 +100,8 @@ pub fn handle_gui_command(line: &str) -> (String, Option<serde_json::Value>) {
     if trimmed == "gui" || trimmed == "gui help" {
         let feedback = concat!(
             "\r\n\x1b[38;2;56;189;248m[GUI]\x1b[0m Action: help\r\n",
-            "  gui open <file>   - Open file in editor\r\n",
-            "  gui edit <file>   - Open file in editor\r\n",
+            "  gui open [file]   - Open file in editor (defaults to scratch-*.scm)\r\n",
+            "  gui edit [file]   - Open file in editor (defaults to scratch-*.scm)\r\n",
             "  gui close [file]  - Close current or specified file\r\n",
             "  gui ratio <L:R>   - Adjust editor/terminal ratio (e.g. 60:40)\r\n",
             "  gui help          - Show this help message\r\n"
@@ -85,7 +109,13 @@ pub fn handle_gui_command(line: &str) -> (String, Option<serde_json::Value>) {
         return (feedback, None);
     }
 
-    if trimmed.starts_with("gui open") || trimmed.starts_with("gui edit") {
+    if trimmed == "gui open"
+        || trimmed == "gui edit"
+        || trimmed.starts_with("gui open ")
+        || trimmed.starts_with("gui edit ")
+        || trimmed.starts_with("gui open\t")
+        || trimmed.starts_with("gui edit\t")
+    {
         let rem = trimmed
             .strip_prefix("gui open")
             .or_else(|| trimmed.strip_prefix("gui edit"))
@@ -93,10 +123,11 @@ pub fn handle_gui_command(line: &str) -> (String, Option<serde_json::Value>) {
             .trim();
         let file = rem.trim_matches(|c| c == '\'' || c == '"').to_string();
 
-        if file.is_empty() {
-            let feedback = "\r\n\x1b[38;2;56;189;248m[GUI]\x1b[0m Action: missing file path for open\r\n".to_string();
-            return (feedback, None);
-        }
+        let file = if file.is_empty() {
+            find_next_scratch_file()
+        } else {
+            file
+        };
 
         let feedback = format!("\r\n\x1b[38;2;56;189;248m[GUI]\x1b[0m Action: open {}\r\n", file);
         let action = serde_json::json!({

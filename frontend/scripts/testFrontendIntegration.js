@@ -215,6 +215,21 @@ function assert(condition, message) {
   assert(first === true && second === false && third === false && actionDispatchCount === 1, '10. Deduplicate GUI action across broadcast sessions');
 }
 
+// 11. Empty gui open defaults to scratch-*.scm
+{
+  function getScratchFile(openFiles) {
+    let counter = 1;
+    while (openFiles.some(f => f.path === `scratch-${counter}.scm`)) {
+      counter++;
+    }
+    return `scratch-${counter}.scm`;
+  }
+
+  assert(getScratchFile([]) === 'scratch-1.scm', '11a. Default scratch file is scratch-1.scm when none open');
+  assert(getScratchFile([{ path: 'scratch-1.scm' }]) === 'scratch-2.scm', '11b. Next scratch file is scratch-2.scm when scratch-1 open');
+  assert(getScratchFile([{ path: 'scratch-1.scm' }, { path: 'scratch-2.scm' }]) === 'scratch-3.scm', '11c. Next scratch file is scratch-3.scm when 1 and 2 open');
+}
+
 console.log('================================================================');
 console.log(`Results: ${passed} passed, ${failed} failed`);
 console.log('================================================================');
