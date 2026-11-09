@@ -46,7 +46,7 @@
 | ⭐⭐⭐⭐ (25%) | **`Alt + Shift + U`** | **`⌥ + ⇧ + U`** | **方括号包裹** (Wrap Square) | `x 10` $\rightarrow$ `[x 10]`（`let*`/`cond` 必备） |
 | ⭐⭐⭐⭐ (20%) | **`Alt + L`** | **`⌥ + L`** | **向右吞噬** (Slurp) | `(a b) c` $\rightarrow$ `(a b c)`（L 偏右吸入） |
 | ⭐⭐⭐⭐ (20%) | **`Alt + J`** | **`⌥ + J`** | **向左吐出** (Barf) | `(a b c)` $\rightarrow$ `(a b) c`（J 偏左收缩） |
-| ⭐⭐⭐ (15%) | **`Alt + I`** | **`⌥ + I`** | **向内收缩** (Contract) | 选区历史回退 / 向内缩一级（已解除 Mac 死键拦截） |
+| ⭐⭐⭐ (15%) | **`Alt + Shift + K`** | **`⌥ + ⇧ + K`** | **向内收缩** (Contract) | 选区历史回退 / 向内缩一级（方案 A 零死键，兼容 `Alt+I`） |
 | ⭐⭐⭐ (10%) | **`Alt + 3`** | **`⌥ + 3`** | **选中顶级函数** (Defun) | 一键选中最外层整个 `(define ...)` |
 | ⭐⭐⭐ (10%) | **`Alt + O`** | **`⌥ + O`** | **脱壳解包** (Splice) | `(let () (expr))` $\rightarrow$ `(expr)` |
 | ⭐⭐⭐ (10%) | **`Alt + 2`** | **`⌥ + 2`** | **大步前进** (Forward Sexp) | 光标跨过右侧整组完整 S 表达式 |
@@ -56,7 +56,7 @@
 | ⭐⭐ (5%) | **`Alt + X`** | **`⌥ + X`** | **向后整块删除** (Kill Sexp) | 删掉光标右侧整组子表达式（不破坏括号，免 Chrome 地址栏抢焦） |
 | ⭐⭐ (5%) | **`Alt + \`** | **`⌥ + \`** | **智能格式排版** (Indent) | 按 Lisp 规范重新对齐当前 S 表达式代码块（免 Chrome 菜单抢焦） |
 | ⭐ (2%) | **`Alt + H`** | **`⌥ + H`** | **相邻参数对调** (Transpose) | `(equal? a b)` $\rightarrow$ `(equal? b a)` |
-| ⭐ (2%) | **`Alt + Shift + K`** | **`⌥ + ⇧ + K`** | **列表切分** (Split) | `(a b \| c d)` $\rightarrow$ `(a b) (c d)` |
+| ⭐ (2%) | **`Alt + Shift + J`** | **`⌥ + ⇧ + J`** | **列表切分** (Split) | `(a b \| c d)` $\rightarrow$ `(a b) (c d)`（Joint cut） |
 
 ---
 

@@ -65,12 +65,12 @@ function assert(condition, message) {
   assert(res && res.changes.some(c => c[0] === 'remove'), '6. Barf (Alt+J): ejects last child');
 }
 
-// 7. Alt + I : Contract
+// 7. Alt + Shift + K / Alt + I : Contract
 {
   // Selection history stack contract
   const stack = [{ start: 0, end: 10 }];
   const popped = stack.pop();
-  assert(popped && popped.start === 0 && popped.end === 10, '7. Contract (Alt+I): restores selection from history stack');
+  assert(popped && popped.start === 0 && popped.end === 10, '7. Contract (Alt+Shift+K / Alt+I): restores selection from history stack');
 
   // AST contraction fallback test
   const src = '(fib (- n 2))';
@@ -160,12 +160,12 @@ function assert(condition, message) {
   assert(res && res.changes.length > 0, '16. Transpose (Alt+H): swaps adjacent sibling sexps');
 }
 
-// 17. Alt + Shift + K : Split
+// 17. Alt + Shift + J : Split
 {
   const src = '(foo bar baz)';
   const ast = paredit.parse(src);
   const res = paredit.editor.splitSexp(ast, src, 8);
-  assert(res && res.changes.some(c => c[2] === ') ('), '17. Split (Alt+Shift+K): splits list at cursor into two lists');
+  assert(res && res.changes.some(c => c[2] === ') ('), '17. Split (Alt+Shift+J): splits list at cursor into two lists');
 }
 
 console.log('================================================================');

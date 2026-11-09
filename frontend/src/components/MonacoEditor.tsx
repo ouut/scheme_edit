@@ -292,15 +292,23 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         () => executeAction('eval_repl')
       );
 
-      // 3. Alt + U : 圆括号包裹 (Wrap Parens)
+      // 3. Alt + U : 圆括号包裹 (Wrap Parens, 兼容 Alt+P 免 Mac 死键)
       editor.addCommand(
         monaco.KeyMod.Alt | monaco.KeyCode.KeyU,
         () => executeAction('wrap_parens')
       );
+      editor.addCommand(
+        monaco.KeyMod.Alt | monaco.KeyCode.KeyP,
+        () => executeAction('wrap_parens')
+      );
 
-      // 4. Alt + Shift + U : 方括号包裹 (Wrap Square)
+      // 4. Alt + Shift + U : 方括号包裹 (Wrap Square, 兼容 Alt+Shift+P)
       editor.addCommand(
         monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyU,
+        () => executeAction('wrap_square')
+      );
+      editor.addCommand(
+        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyP,
         () => executeAction('wrap_square')
       );
 
@@ -316,7 +324,11 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         () => executeAction('barf')
       );
 
-      // 7. Alt + I / Alt + Shift + I : 向内收缩 (Contract)
+      // 7. Alt + Shift + K : 向内收缩 (Contract - 方案 A 核心，兼容 Alt+I)
+      editor.addCommand(
+        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyK,
+        () => executeAction('contract')
+      );
       editor.addCommand(
         monaco.KeyMod.Alt | monaco.KeyCode.KeyI,
         () => executeAction('contract')
@@ -388,9 +400,9 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         () => executeAction('transpose')
       );
 
-      // 17. Alt + Shift + K : 列表切分 (Split)
+      // 17. Alt + Shift + J : 列表切分 (Split)
       editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyK,
+        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyJ,
         () => executeAction('split')
       );
 
@@ -467,13 +479,18 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
 
         if (isShift) {
           // Alt + Shift combinations:
-          if (matchKey('KeyU', 85, [], ['u', '¨'])) {
-            // 4. Alt + Shift + U: 方括号包裹 (Wrap Square)
+          if (matchKey('KeyU', 85, [], ['u', '¨']) || matchKey('KeyP', 80, [], ['p', 'π', '∏'])) {
+            // 4. Alt + Shift + U / Alt + Shift + P: 方括号包裹 (Wrap Square)
             trigger('wrap_square');
             return;
           }
           if (matchKey('KeyK', 75, [], ['k', ''])) {
-            // 17. Alt + Shift + K: 列表切分 (Split)
+            // 7. Alt + Shift + K: 向内收缩 (Contract - 方案 A 核心键位，彻底免疫 Mac 死键)
+            trigger('contract');
+            return;
+          }
+          if (matchKey('KeyJ', 74, [], ['j', 'ô', 'Ô'])) {
+            // 17. Alt + Shift + J: 列表切分 (Split - 方案 A Joint cut)
             trigger('split');
             return;
           }
@@ -490,12 +507,12 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
             return;
           }
           if (matchKey('KeyI', 73, [], ['i', 'ˆ', '^', 'ı'])) {
-            // 7. Alt + I: 向内收缩 (Contract) - Note: Option+I is macOS circumflex dead key
+            // 7. Alt + I: 向内收缩 (Contract - 兼容别名)
             trigger('contract');
             return;
           }
-          if (matchKey('KeyU', 85, [], ['u', '¨'])) {
-            // 3. Alt + U: 圆括号包裹 (Wrap Parens) - Note: Option+U is macOS umlaut dead key
+          if (matchKey('KeyU', 85, [], ['u', '¨']) || matchKey('KeyP', 80, [], ['p', 'π'])) {
+            // 3. Alt + U / Alt + P: 圆括号包裹 (Wrap Parens)
             trigger('wrap_parens');
             return;
           }

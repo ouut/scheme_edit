@@ -294,7 +294,7 @@ export function expandSelection(editor: monaco.editor.IStandaloneCodeEditor): { 
     to = from;
   }
 
-  // Save cloned current selection for Contract (Alt + I)
+  // Save cloned current selection for Contract (Alt + Shift + K / Alt + I)
   selectionHistoryStack.push(
     new monaco.Selection(
       currentSelection.selectionStartLineNumber,
@@ -715,7 +715,7 @@ export function barfForward(editor: monaco.editor.IStandaloneCodeEditor): { succ
 }
 
 /**
- * 7. Alt + I : 向内收缩 (Contract)
+ * 7. Alt + Shift + K : 向内收缩 (Contract, 兼容 Alt + I)
  */
 export function contractSelection(editor: monaco.editor.IStandaloneCodeEditor): { success: boolean; detail?: string } {
   const model = editor.getModel();
@@ -1154,7 +1154,7 @@ export function killSexp(editor: monaco.editor.IStandaloneCodeEditor): { success
 }
 
 /**
- * 15. Alt + I : 智能格式排版 (Indent)
+ * 15. Alt + \ : 智能格式排版 (Indent)
  */
 export function indent(editor: monaco.editor.IStandaloneCodeEditor): { success: boolean; detail?: string } {
   const model = editor.getModel();
