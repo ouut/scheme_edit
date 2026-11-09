@@ -56,7 +56,7 @@
 | ⭐⭐ (5%) | **`Alt + X`** | **`⌥ + X`** | **向后整块删除** (Kill Sexp) | 删掉光标右侧整组子表达式（不破坏括号，免 Chrome 地址栏抢焦） |
 | ⭐⭐ (5%) | **`Alt + \`** | **`⌥ + \`** | **智能格式排版** (Indent) | 按 Lisp 规范重新对齐当前 S 表达式代码块（免 Chrome 菜单抢焦） |
 | ⭐ (2%) | **`Alt + H`** | **`⌥ + H`** | **相邻参数对调** (Transpose) | `(equal? a b)` $\rightarrow$ `(equal? b a)` |
-| ⭐ (2%) | **`Alt + Shift + J`** | **`⌥ + ⇧ + J`** | **列表切分** (Split) | `(a b \| c d)` $\rightarrow$ `(a b) (c d)`（Joint cut） |
+| ⭐ (2%) | **`Alt + Shift + H`** | **`⌥ + ⇧ + H`** | **列表切分** (Split) | `(a b \| c d)` $\rightarrow$ `(a b) (c d)`（Halve list，与 Alt+H 对调呼应） |
 
 ---
 

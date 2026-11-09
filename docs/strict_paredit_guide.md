@@ -32,7 +32,7 @@
    * **`Alt + X`（Mac: `⌥ X`，向后整块删除）**：eXterminate/剪切式抹除，100% 避开 Chrome 地址栏抢焦（原 `Alt+D`）。
    * **`Alt + \`（Mac: `⌥ \`，智能格式排版）**：对齐与排版，100% 避开 Chrome 菜单抢焦（原 `Alt+F`）。
    * **`Alt + H`（Mac: `⌥ H`，相邻参数对调）**：Handle swap 两项互换。
-   * **`Alt + Shift + J`（Mac: `⌥ ⇧ J`，列表切分 Split）**：Joint cut 光标处一分为二（与 J 键同列，零死键）。
+   * **`Alt + Shift + H`（Mac: `⌥ ⇧ H`，列表切分 Split）**：Halve list 光标处一分为二（与 Alt+H 对调呼应，零死键）。
 
 ---
 
@@ -56,4 +56,4 @@
 | ⭐⭐<br>(5%) | **`Alt + X`** | **`⌥ + X`** | **向后整块删除** (Kill Sexp) | eXterminate 删词（免冲突） | 删掉光标右侧的一整组完整子表达式（不破括号，完全避开浏览器抢焦）。 |
 | ⭐⭐<br>(5%) | **`Alt + \`** | **`⌥ + \`** | **智能格式排版** (Indent) | 排版与对齐（免冲突） | 一键重新按 Lisp 缩进规范对齐当前 S 表达式代码块（完全避开 Chrome 菜单）。 |
 | ⭐<br>(2%) | **`Alt + H`** | **`⌥ + H`** | **相邻参数对调** (Transpose) | Handle swap 交换位置 | `(equal? a b)` $\rightarrow$ `(equal? b a)`，两项位置瞬间互换。 |
-| ⭐<br>(2%) | **`Alt + Shift + J`** | **`⌥ + ⇧ + J`** | **列表切分** (Split) | Joint cut 列表切分 (零冲突) | `(a b \| c d)` $\rightarrow$ `(a b) (c d)`，从光标处把列表切成两半。 |
+| ⭐<br>(2%) | **`Alt + Shift + H`** | **`⌥ + ⇧ + H`** | **列表切分** (Split) | Halve list 列表切分 (零冲突) | `(a b \| c d)` $\rightarrow$ `(a b) (c d)`，从光标处把列表切成两半。 |

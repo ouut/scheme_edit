@@ -160,12 +160,12 @@ function assert(condition, message) {
   assert(res && res.changes.length > 0, '16. Transpose (Alt+H): swaps adjacent sibling sexps');
 }
 
-// 17. Alt + Shift + J : Split
+// 17. Alt + Shift + H : Split
 {
   const src = '(foo bar baz)';
   const ast = paredit.parse(src);
   const res = paredit.editor.splitSexp(ast, src, 8);
-  assert(res && res.changes.some(c => c[2] === ') ('), '17. Split (Alt+Shift+J): splits list at cursor into two lists');
+  assert(res && res.changes.some(c => c[2] === ') ('), '17. Split (Alt+Shift+H): splits list at cursor into two lists');
 }
 
 console.log('================================================================');
