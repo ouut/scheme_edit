@@ -10,13 +10,15 @@
 
 1. **括号结构是神圣不可侵犯的实体**：括号永远平衡，代码只能在合法树结构间变形。
 2. **永远不要手工键入或删除单边括号**：
-   * 想把代码套进括号？用 **`Alt + U`**（圆括号）或 **`Alt + Shift + U`**（方括号）。
+   * 想把代码套进括号？用 **`Alt + H`**（圆括号）或 **`Alt + Shift + H`**（方括号）。
    * 想把外部代码纳入现有括号？用 **`Alt + L`**（Mac: `⌥ L`，向右吞噬 Slurp）。
    * 想把括号内末尾项踢出去？用 **`Alt + J`**（Mac: `⌥ J`，向左吐出 Barf）。
    * 想去掉一层外壳括号？用 **`Alt + O`**（Mac: `⌥ O`，脱壳解包 Splice）。
-3. **手指定位基准（右手 J-K-L 核心区）**：
-   * `K`（外扩 `Alt + K`） $\leftrightarrow$ `Shift + K`（内缩 `Alt + Shift + K`，方案 A 零死键镜像，兼容 `Alt+I`）
-   * `J`（左吐出 `Alt + J` / 切分 `Alt + Shift + J`） $\leftrightarrow$ `L`（右吸入 `Alt + L`）
+3. **手指定位基准（右手 H-J-K-L 四轴八态主键矩阵）**：
+   * `H`（圆括号 `Alt + H` / 方括号 `Alt + Shift + H`） $\rightarrow$ Hold/Hug 包裹
+   * `J`（左吐出 `Alt + J` / 切分 `Alt + Shift + J`） $\rightarrow$ 向左收缩与切分
+   * `K`（外扩 `Alt + K` / 内缩 `Alt + Shift + K`） $\rightarrow$ 纵向呼吸
+   * `L`（右吸入 `Alt + L` / 对调 `Alt + Shift + L`） $\rightarrow$ 向右吞入与对调
 
 ---
 
@@ -65,7 +67,7 @@
 ;; [阶段 A 初始]: 只有单个变量 cards
 cards
 
-;; [阶段 A 动作]: 光标停在 cards 上，按 [Alt + U] -> 瞬间包裹
+;; [阶段 A 动作]: 光标停在 cards 上，按 [Alt + H] -> 瞬间包裹
 (cards)
 
 ;; [阶段 A 完成]: 直接键入 shuffle 空格，单键完成函数化封装！
@@ -75,14 +77,14 @@ cards
 (let* (x 100)
   (+ x 1))
 
-;; [阶段 B 动作]: 光标选中 x 100，按 [Alt + Shift + U] -> 规范方括号
+;; [阶段 B 动作]: 光标选中 x 100，按 [Alt + Shift + H] -> 规范方括号
 (let* ([x 100])
   (+ x 1))
 ```
 
 * **最佳实践心得**：
-  * **`Alt + U`（圆括号包裹）**：当你写完参数才想起来需要套一层函数时，绝对不需要跳到行首打 `(`，只需原地按 `Alt + U`，立刻变成函数调用！
-  * **`Alt + Shift + U`（方括号包裹）**：编写 `cond` 条件分支、`let*` 局部绑定的利器。
+  * **`Alt + H`（圆括号包裹）**：当你写完参数才想起来需要套一层函数时，绝对不需要跳到行首打 `(`，只需原地按 `Alt + H`，立刻变成函数调用！
+  * **`Alt + Shift + H`（方括号包裹）**：编写 `cond` 条件分支、`let*` 局部绑定的利器。
 
 ---
 
@@ -175,14 +177,14 @@ cards
 
 | 动作 | 快捷键 | 视觉感受与逻辑 |
 | :--- | :--- | :--- |
-| **深度钻入 (Down)** | **`Alt + S`** | 瞬间跳进当前括号内部最左侧第一个参数前（往下层钻） |
-| **向上跳出 (Up)** | **`Alt + W`** | 瞬间跳出当前层，回到外层父括号前（往外层跳） |
+| **步进深入 (Step Into)** | **`Alt + W`** | 类似前进深入，瞬间跳进当前括号内部最左侧第一个参数前（深入深层） |
+| **步退跳出 (Step Out)** | **`Alt + S`** | 类似后退撤出，瞬间跳出当前层，回到外层父括号前（撤出外层） |
 | **大步前进 (Forward)** | **`Alt + 2`** | 跨过右侧整组完整 S 表达式（数字 2 向右） |
 | **大步后退 (Backward)** | **`Alt + 1`** | 倒退跨过左侧整组完整 S 表达式（数字 1 向左） |
 
 * **走位实战连招**：
   在 `(pipeline ...)` 最左侧：
-  `Alt + S`（钻进第一层） $\rightarrow$ `Alt + 2`（跨过 step-one 进入 step-two） $\rightarrow$ `Alt + S`（钻进 step-two 内部） $\rightarrow$ 瞬间抵达核心逻辑！
+  `Alt + W`（深入第一层） $\rightarrow$ `Alt + 2`（跨过 step-one 进入 step-two） $\rightarrow$ `Alt + W`（深入 step-two 内部） $\rightarrow$ 瞬间抵达核心逻辑！
 
 ---
 
@@ -193,7 +195,7 @@ cards
 ;; 参数顺序写反了：
 (equal? expected actual)
 ```
-* **操作**：将光标放在两个参数之间，按 **`Alt + H`**（Handle swap）。
+* **操作**：将光标放在两个参数之间，按 **`Alt + Shift + L`**（Leap swap 横向对调）。
 * **变形后**：`(equal? actual expected)`，两项瞬间对调！
 
 #### 练习 B：列表切分（Split）
@@ -201,7 +203,7 @@ cards
 ;; 单个列表太长，想在 30 后面切分为两段：
 (list 10 20 30 | 40 50 60)
 ```
-* **操作**：将光标停在 30 与 40 之间的空格处，按 **`Alt + Shift + H`**（Halve list，列表切分）。
+* **操作**：将光标停在 30 与 40 之间的空格处，按 **`Alt + Shift + J`**（Joint cut，列表切分）。
 * **变形后**：`(list 10 20 30) (40 50 60)`，瞬间裂变为两个独立列表！
 
 #### 练习 C：智能对齐排版（Indent）
@@ -212,7 +214,7 @@ cards
 ## ⚡ 终极连招速查配方（Muscle Memory Combos）
 
 1. **“闪电包装 + 吞噬” 连招**：
-   `光标在参数上` $\rightarrow$ `Alt + U`（套括号） $\rightarrow$ `输入函数名 + 空格` $\rightarrow$ `Alt + L`（把下一个参数吸入）。
+   `光标在参数上` $\rightarrow$ `Alt + H`（套括号） $\rightarrow$ `输入函数名 + 空格` $\rightarrow$ `Alt + L`（把下一个参数吸入）。
 2. **“安全重构” 连招**：
    `Alt + K`（向外扩选确认范围） $\rightarrow$ 确认高亮区域正是目标 $\rightarrow$ `Alt + X` 或 `Backspace` 一键清除。
 3. **“交互求值闭环” 连招**：

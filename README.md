@@ -42,8 +42,8 @@
 | :--- | :--- | :--- | :--- | :--- |
 | ⭐⭐⭐⭐⭐ (45%) | **`Alt + K`** | **`⌥ + K`** | **向外扩选** (Expand) | 自动严丝合缝选中当前 `(...)`，连按扩大一层括号 |
 | ⭐⭐⭐⭐⭐ (45%) | **`Alt + Enter` / `Ctrl + Enter`** | **`⌥ + ↵` / `⌘ + ↵`** | **发射求值** (Eval REPL) | 选中代码或当前表达式立即送入 Steel REPL |
-| ⭐⭐⭐⭐ (25%) | **`Alt + U`** | **`⌥ + U`** | **圆括号包裹** (Wrap Parens) | `cards` $\rightarrow$ `(cards)`（已解除 Mac 死键拦截） |
-| ⭐⭐⭐⭐ (25%) | **`Alt + Shift + U`** | **`⌥ + ⇧ + U`** | **方括号包裹** (Wrap Square) | `x 10` $\rightarrow$ `[x 10]`（`let*`/`cond` 必备） |
+| ⭐⭐⭐⭐ (25%) | **`Alt + H`** | **`⌥ + H`** | **圆括号包裹** (Wrap Parens) | `cards` $\rightarrow$ `(cards)`（Hold/Hug 零死键） |
+| ⭐⭐⭐⭐ (25%) | **`Alt + Shift + H`** | **`⌥ + ⇧ + H`** | **方括号包裹** (Wrap Square) | `x 10` $\rightarrow$ `[x 10]`（Hold square 零死键） |
 | ⭐⭐⭐⭐ (20%) | **`Alt + L`** | **`⌥ + L`** | **向右吞噬** (Slurp) | `(a b) c` $\rightarrow$ `(a b c)`（L 偏右吸入） |
 | ⭐⭐⭐⭐ (20%) | **`Alt + J`** | **`⌥ + J`** | **向左吐出** (Barf) | `(a b c)` $\rightarrow$ `(a b) c`（J 偏左收缩） |
 | ⭐⭐⭐ (15%) | **`Alt + Shift + K`** | **`⌥ + ⇧ + K`** | **向内收缩** (Contract) | 选区历史回退 / 向内缩一级（方案 A 零死键，兼容 `Alt+I`） |
@@ -51,12 +51,12 @@
 | ⭐⭐⭐ (10%) | **`Alt + O`** | **`⌥ + O`** | **脱壳解包** (Splice) | `(let () (expr))` $\rightarrow$ `(expr)` |
 | ⭐⭐⭐ (10%) | **`Alt + 2`** | **`⌥ + 2`** | **大步前进** (Forward Sexp) | 光标跨过右侧整组完整 S 表达式 |
 | ⭐⭐⭐ (10%) | **`Alt + 1`** | **`⌥ + 1`** | **大步后退** (Backward Sexp) | 光标跨过左侧整组完整 S 表达式 |
-| ⭐⭐ (5%) | **`Alt + S`** | **`⌥ + S`** | **深度钻入** (Down) | 跳进当前括号内部最左侧第一个参数前 |
-| ⭐⭐ (5%) | **`Alt + W`** | **`⌥ + W`** | **向上跳出** (Up) | 跳到当前外层括号左侧前置位 |
+| ⭐⭐ (5%) | **`Alt + W`** | **`⌥ + W`** | **步进深入** (Step Into) | 跳进当前括号内部最左侧第一个参数前（前进深入） |
+| ⭐⭐ (5%) | **`Alt + S`** | **`⌥ + S`** | **步退跳出** (Step Out) | 跳到当前外层括号左侧前置位（后退撤出） |
 | ⭐⭐ (5%) | **`Alt + X`** | **`⌥ + X`** | **向后整块删除** (Kill Sexp) | 删掉光标右侧整组子表达式（不破坏括号，免 Chrome 地址栏抢焦） |
 | ⭐⭐ (5%) | **`Alt + \`** | **`⌥ + \`** | **智能格式排版** (Indent) | 按 Lisp 规范重新对齐当前 S 表达式代码块（免 Chrome 菜单抢焦） |
-| ⭐ (2%) | **`Alt + H`** | **`⌥ + H`** | **相邻参数对调** (Transpose) | `(equal? a b)` $\rightarrow$ `(equal? b a)` |
-| ⭐ (2%) | **`Alt + Shift + H`** | **`⌥ + ⇧ + H`** | **列表切分** (Split) | `(a b \| c d)` $\rightarrow$ `(a b) (c d)`（Halve list，与 Alt+H 对调呼应） |
+| ⭐ (2%) | **`Alt + Shift + L`** | **`⌥ + ⇧ + L`** | **相邻参数对调** (Transpose) | `(equal? a b)` $\rightarrow$ `(equal? b a)`（Leap swap） |
+| ⭐ (2%) | **`Alt + Shift + J`** | **`⌥ + ⇧ + J`** | **列表切分** (Split) | `(a b \| c d)` $\rightarrow$ `(a b) (c d)`（Joint cut） |
 
 ---
 

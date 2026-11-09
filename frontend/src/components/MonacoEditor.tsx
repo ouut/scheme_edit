@@ -206,12 +206,12 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
             }, 0);
             return;
           }
-          if (change.text === '¨' || change.text === '˜' || change.text === '~') {
+          if (change.text === '¨') {
             setTimeout(() => {
               const model = editor.getModel();
               if (model) {
                 withParinferLock(() => {
-                  editor.executeEdits('revertDeadUmlautOrTilde', [
+                  editor.executeEdits('revertDeadUmlaut', [
                     {
                       range: new monaco.Range(
                         change.range.startLineNumber,
@@ -292,31 +292,31 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         () => executeAction('eval_repl')
       );
 
-      // 3. Alt + N / Alt + P / Alt + U : 圆括号包裹 (Wrap Parens)
+      // 3. Alt + H : 圆括号包裹 (Wrap Parens, 兼顾 Alt+U/P)
       editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyN,
-        () => executeAction('wrap_parens')
-      );
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyP,
+        monaco.KeyMod.Alt | monaco.KeyCode.KeyH,
         () => executeAction('wrap_parens')
       );
       editor.addCommand(
         monaco.KeyMod.Alt | monaco.KeyCode.KeyU,
         () => executeAction('wrap_parens')
       );
-
-      // 4. Alt + Shift + N / Alt + Shift + P / Alt + Shift + U : 方括号包裹 (Wrap Square)
       editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyN,
-        () => executeAction('wrap_square')
+        monaco.KeyMod.Alt | monaco.KeyCode.KeyP,
+        () => executeAction('wrap_parens')
       );
+
+      // 4. Alt + Shift + H : 方括号包裹 (Wrap Square, 兼顾 Alt+Shift+U/P)
       editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyP,
+        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyH,
         () => executeAction('wrap_square')
       );
       editor.addCommand(
         monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyU,
+        () => executeAction('wrap_square')
+      );
+      editor.addCommand(
+        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyP,
         () => executeAction('wrap_square')
       );
 
@@ -370,15 +370,15 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         () => executeAction('backward')
       );
 
-      // 12. Alt + S : 深度钻入 (Down)
+      // 12. Alt + W : 步进深入 (Step Into)
       editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyS,
+        monaco.KeyMod.Alt | monaco.KeyCode.KeyW,
         () => executeAction('down')
       );
 
-      // 13. Alt + W : 向上跳出 (Up)
+      // 13. Alt + S : 步退跳出 (Step Out)
       editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyW,
+        monaco.KeyMod.Alt | monaco.KeyCode.KeyS,
         () => executeAction('up')
       );
 
@@ -402,17 +402,13 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         () => executeAction('indent')
       );
 
-      // 16. Alt + H : 相邻参数对调 (Transpose)
+      // 16. Alt + Shift + L : 相邻参数对调 (Transpose)
       editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyH,
+        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyL,
         () => executeAction('transpose')
       );
 
-      // 17. Alt + Shift + H : 列表切分 (Split, 兼容 Alt+Shift+J)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyH,
-        () => executeAction('split')
-      );
+      // 17. Alt + Shift + J : 列表切分 (Split)
       editor.addCommand(
         monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyJ,
         () => executeAction('split')
@@ -492,12 +488,17 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         if (isShift) {
           // Alt + Shift combinations:
           if (
-            matchKey('KeyN', 78, [], ['n', '˜', '~']) ||
-            matchKey('KeyP', 80, [], ['p', 'π', '∏']) ||
-            matchKey('KeyU', 85, [], ['u', '¨'])
+            matchKey('KeyH', 72, [], ['h', 'ó', 'Ó']) ||
+            matchKey('KeyU', 85, [], ['u', '¨']) ||
+            matchKey('KeyP', 80, [], ['p', 'π', '∏'])
           ) {
-            // 4. Alt + Shift + N / Alt + Shift + P / Alt + Shift + U: 方括号包裹 (Wrap Square)
+            // 4. Alt + Shift + H: 方括号包裹 (Wrap Square, 零死键)
             trigger('wrap_square');
+            return;
+          }
+          if (matchKey('KeyL', 76, [], ['l', 'ò', 'Ò'])) {
+            // 16. Alt + Shift + L: 相邻参数对调 (Transpose, Leap swap)
+            trigger('transpose');
             return;
           }
           if (matchKey('KeyK', 75, [], ['k', ''])) {
@@ -505,8 +506,8 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
             trigger('contract');
             return;
           }
-          if (matchKey('KeyH', 72, [], ['h', 'Ó', 'ó']) || matchKey('KeyJ', 74, [], ['j', 'ô', 'Ô'])) {
-            // 17. Alt + Shift + H: 列表切分 (Split - Halve list, 兼容 Alt+Shift+J)
+          if (matchKey('KeyJ', 74, [], ['j', 'ô', 'Ô'])) {
+            // 17. Alt + Shift + J: 列表切分 (Split - Joint cut)
             trigger('split');
             return;
           }
@@ -517,6 +518,15 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
           }
         } else {
           // Alt / Option single key combinations:
+          if (
+            matchKey('KeyH', 72, [], ['h', '˙']) ||
+            matchKey('KeyU', 85, [], ['u', '¨']) ||
+            matchKey('KeyP', 80, [], ['p', 'π'])
+          ) {
+            // 3. Alt + H: 圆括号包裹 (Wrap Parens, Hold/Hug 零死键)
+            trigger('wrap_parens');
+            return;
+          }
           if (matchKey('KeyK', 75, [], ['k', '˚'])) {
             // 1. Alt + K: 向外扩选 (Expand)
             trigger('expand');
@@ -525,15 +535,6 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
           if (matchKey('KeyI', 73, [], ['i', 'ˆ', '^', 'ı'])) {
             // 7. Alt + I: 向内收缩 (Contract - 兼容别名)
             trigger('contract');
-            return;
-          }
-          if (
-            matchKey('KeyN', 78, [], ['n', '˜', '~']) ||
-            matchKey('KeyP', 80, [], ['p', 'π']) ||
-            matchKey('KeyU', 85, [], ['u', '¨'])
-          ) {
-            // 3. Alt + N / Alt + P / Alt + U: 圆括号包裹 (Wrap Parens)
-            trigger('wrap_parens');
             return;
           }
           if (matchKey('KeyL', 76, [], ['l', '¬'])) {
@@ -566,13 +567,13 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
             trigger('backward');
             return;
           }
-          if (matchKey('KeyS', 83, [], ['s', 'ß'])) {
-            // 12. Alt + S: 深度钻入 (Down)
+          if (matchKey('KeyW', 87, [], ['w', '∑'])) {
+            // 12. Alt + W: 步进深入 (Step Into)
             trigger('down');
             return;
           }
-          if (matchKey('KeyW', 87, [], ['w', '∑'])) {
-            // 13. Alt + W: 向上跳出 (Up)
+          if (matchKey('KeyS', 83, [], ['s', 'ß'])) {
+            // 13. Alt + S: 步退跳出 (Step Out)
             trigger('up');
             return;
           }
@@ -615,8 +616,6 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
           inputData === 'ˆ' ||
           inputData === '^' ||
           inputData === '¨' ||
-          inputData === '˜' ||
-          inputData === '~' ||
           Date.now() - lastAltActionTime < 500
         ) {
           e.preventDefault();
@@ -624,7 +623,7 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
           if (inputData === 'ˆ' || inputData === '^') {
             lastAltActionTime = Date.now();
             executeAction('contract');
-          } else if (inputData === '¨' || inputData === '˜' || inputData === '~') {
+          } else if (inputData === '¨') {
             lastAltActionTime = Date.now();
             executeAction('wrap_parens');
           }

@@ -33,20 +33,20 @@ function assert(condition, message) {
   assert(ast && ast.children && ast.children.length === 1, '2. Eval REPL (Alt+Enter / Ctrl+Enter): AST parseable and ready for /api/eval');
 }
 
-// 3. Alt + U : Wrap Parens
+// 3. Alt + H : Wrap Parens
 {
   const src = '(define cards 10)';
   const ast = paredit.parse(src);
   const res = paredit.editor.wrapAround(ast, src, 8, '(', ')', { count: 1 });
-  assert(res && res.changes.length === 2 && res.changes[0][2] === '(' && res.changes[1][2] === ')', '3. Wrap Parens (Alt+U): wraps with ()');
+  assert(res && res.changes.length === 2 && res.changes[0][2] === '(' && res.changes[1][2] === ')', '3. Wrap Parens (Alt+H): wraps with ()');
 }
 
-// 4. Alt + Shift + U : Wrap Square
+// 4. Alt + Shift + H : Wrap Square
 {
   const src = '(let* (x 10) x)';
   const ast = paredit.parse(src);
   const res = paredit.editor.wrapAround(ast, src, 7, '[', ']', { count: 1 });
-  assert(res && res.changes.length === 2 && res.changes[0][2] === '[' && res.changes[1][2] === ']', '4. Wrap Square (Alt+Shift+U): wraps with []');
+  assert(res && res.changes.length === 2 && res.changes[0][2] === '[' && res.changes[1][2] === ']', '4. Wrap Square (Alt+Shift+H): wraps with []');
 }
 
 // 5. Alt + L : Slurp
@@ -121,20 +121,20 @@ function assert(condition, message) {
   assert(pos === 6, '11. Backward (Alt+1): jumps backward past sexp');
 }
 
-// 12. Alt + S : Down
+// 12. Alt + W : Down / Step Into
 {
   const src = '(define (add a b) (+ a b))';
   const ast = paredit.parse(src);
   const pos = paredit.navigator.forwardDownSexp(ast, 0);
-  assert(pos === 1, '12. Down (Alt+S): dives into list after open paren');
+  assert(pos === 1, '12. Step Into (Alt+W): dives into list after open paren');
 }
 
-// 13. Alt + W : Up
+// 13. Alt + S : Up / Step Out
 {
   const src = '(define (add a b) (+ a b))';
   const ast = paredit.parse(src);
   const pos = paredit.navigator.backwardUpSexp(ast, 22);
-  assert(pos === 18, '13. Up (Alt+W): jumps up to enclosing list head');
+  assert(pos === 18, '13. Step Out (Alt+S): jumps up to enclosing list head');
 }
 
 // 14. Alt + X : Kill Sexp
@@ -152,20 +152,20 @@ function assert(condition, message) {
   assert(res.success && res.text.includes(' (+ x 1))'), '15. Indent (Alt+\\): aligns S-expression according to Lisp indentation');
 }
 
-// 16. Alt + H : Transpose
+// 16. Alt + Shift + L : Transpose
 {
   const src = '(equal? a b)';
   const ast = paredit.parse(src);
   const res = paredit.editor.transpose(ast, src, 9);
-  assert(res && res.changes.length > 0, '16. Transpose (Alt+H): swaps adjacent sibling sexps');
+  assert(res && res.changes.length > 0, '16. Transpose (Alt+Shift+L): swaps adjacent sibling sexps');
 }
 
-// 17. Alt + Shift + H : Split
+// 17. Alt + Shift + J : Split
 {
   const src = '(foo bar baz)';
   const ast = paredit.parse(src);
   const res = paredit.editor.splitSexp(ast, src, 8);
-  assert(res && res.changes.some(c => c[2] === ') ('), '17. Split (Alt+Shift+H): splits list at cursor into two lists');
+  assert(res && res.changes.some(c => c[2] === ') ('), '17. Split (Alt+Shift+J): splits list at cursor into two lists');
 }
 
 console.log('================================================================');
