@@ -61,7 +61,7 @@ jobs:
           steel --version
 
       - name: Run cargo tests
-        run: cargo test --manifest-path server/Cargo.toml
+        run: cargo test --manifest-path server/Cargo.toml -- --nocapture
 
       - name: Build release binary
         run: cargo build --release --manifest-path server/Cargo.toml
