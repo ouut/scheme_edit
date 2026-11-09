@@ -1825,9 +1825,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Send intercepted gui command: gui open test_live.scm\r
+        // Send intercepted gui command with escape sequence prefix (simulating ConPTY cursor position report):
         ws_stream
-            .send(TungsteniteMessage::Text("gui open test_live.scm\r".to_string()))
+            .send(TungsteniteMessage::Text("\x1b[1;1Rgui open test_live.scm\r".to_string()))
             .await
             .unwrap();
 

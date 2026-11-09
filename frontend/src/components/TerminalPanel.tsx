@@ -68,12 +68,11 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
       // 1. Switch active tab to Tab 1
       setActiveTabId('repl');
 
-      // 2. Send code + '\n', scroll to bottom and focus
+      // 2. Send code + '\n', scroll to bottom (do not steal focus from code editor)
       const replTab = tabRefs.current.get('repl');
       if (replTab) {
         replTab.sendInput(code + '\n');
         replTab.scrollToBottom();
-        replTab.focus();
       }
     }, []);
 

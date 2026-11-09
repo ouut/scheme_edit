@@ -138,6 +138,11 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
           }
         );
 
+        // Keep editor focus at current cursor position after evaluation
+        if (id === 'eval_repl') {
+          editor.focus();
+        }
+
         onShortcutTriggeredRef.current?.(
           id,
           res.detail || (res.success ? 'Executed' : 'No-op'),

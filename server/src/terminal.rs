@@ -232,11 +232,90 @@ pub fn handle_gui_command(line: &str) -> (String, Option<serde_json::Value>) {
     (feedback, None)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EscapeState {
+    Normal,
+    Esc,
+    Csi,
+    Osc,
+}
+
+/// Strip ANSI escape sequences and non-printable control characters from raw terminal line
+pub fn strip_ansi_and_controls(input: &str) -> String {
+    let mut result = String::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if let Some(&next) = chars.peek() {
+                if next == '[' {
+                    chars.next();
+                    // CSI parameter/intermediate bytes 0x20..=0x3F, final byte 0x40..=0x7E
+                    while let Some(&ch) = chars.peek() {
+                        chars.next();
+                        if ('\x40'..='\x7e').contains(&ch) {
+                            break;
+                        }
+                    }
+                } else if next == ']' {
+                    chars.next();
+                    // OSC sequence terminated by BEL (0x07) or ST (\x1b\)
+                    while let Some(&ch) = chars.peek() {
+                        chars.next();
+                        if ch == '\x07' {
+                            break;
+                        }
+                        if ch == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                } else if ('\x40'..='\x5f').contains(&next) {
+                    chars.next();
+                }
+            }
+        } else if c == '\t' || (!c.is_control() && c != '\r' && c != '\n') {
+            result.push(c);
+        }
+    }
+
+    let trimmed = result.trim_start();
+    // If there is any leftover naked terminal query response prefix like "1;1R" or "?1;0c" or ">0;10;0c"
+    if let Some(rest) = strip_terminal_query_prefix(trimmed) {
+        rest.to_string()
+    } else {
+        result
+    }
+}
+
+fn strip_terminal_query_prefix(s: &str) -> Option<&str> {
+    let mut idx = 0;
+    let chars: Vec<char> = s.chars().collect();
+    if chars.is_empty() {
+        return None;
+    }
+    // Optional leading '?' or '>'
+    if idx < chars.len() && (chars[idx] == '?' || chars[idx] == '>') {
+        idx += 1;
+    }
+    let mut has_digit = false;
+    while idx < chars.len() && (chars[idx].is_ascii_digit() || chars[idx] == ';') {
+        has_digit = true;
+        idx += 1;
+    }
+    if has_digit && idx < chars.len() && (chars[idx] == 'R' || chars[idx] == 'c') {
+        let prefix_len: usize = chars[..=idx].iter().map(|c| c.len_utf8()).sum();
+        return Some(&s[prefix_len..]);
+    }
+    None
+}
+
 /// Process terminal input stream from WebSocket to child PTY, intercepting "gui " lines
 pub async fn process_terminal_input(
     bytes: &[u8],
     line_buf: &mut Vec<u8>,
     ignore_next_lf: &mut bool,
+    escape_state: &mut EscapeState,
     pty_writer: &Arc<tokio::sync::Mutex<Box<dyn Write + Send>>>,
     tx_to_ws: &tokio::sync::mpsc::Sender<Message>,
     state: &Arc<AppState>,
@@ -251,12 +330,52 @@ pub async fn process_terminal_input(
         }
         *ignore_next_lf = false;
 
+        // Escape sequence state machine:
+        // Always push to pending_bytes so child PTY receives ANSI responses/control bytes,
+        // but do NOT push escape sequence bytes into line_buf!
+        match *escape_state {
+            EscapeState::Esc => {
+                pending_bytes.push(b);
+                if b == b'[' {
+                    *escape_state = EscapeState::Csi;
+                } else if b == b']' {
+                    *escape_state = EscapeState::Osc;
+                } else {
+                    *escape_state = EscapeState::Normal;
+                }
+                continue;
+            }
+            EscapeState::Csi => {
+                pending_bytes.push(b);
+                if (0x40..=0x7e).contains(&b) {
+                    *escape_state = EscapeState::Normal;
+                }
+                continue;
+            }
+            EscapeState::Osc => {
+                pending_bytes.push(b);
+                if b == 0x07 {
+                    *escape_state = EscapeState::Normal;
+                }
+                continue;
+            }
+            EscapeState::Normal => {
+                if b == 0x1b {
+                    *escape_state = EscapeState::Esc;
+                    pending_bytes.push(b);
+                    continue;
+                }
+            }
+        }
+
         if b == b'\r' || b == b'\n' {
             if b == b'\r' {
                 *ignore_next_lf = true;
             }
 
-            let line_str = String::from_utf8_lossy(line_buf).trim().to_string();
+            let raw_str = String::from_utf8_lossy(line_buf);
+            let clean_str = strip_ansi_and_controls(&raw_str);
+            let line_str = clean_str.trim().to_string();
             let is_gui = line_str == "gui" || line_str.starts_with("gui ") || line_str.starts_with("gui\t");
 
             if is_gui {
@@ -268,7 +387,7 @@ pub async fn process_terminal_input(
                     pending_bytes.clear();
                 }
 
-                // 2. Send \x03 (Ctrl+C) to child PTY to cancel bash command line without command-not-found
+                // 2. Send \x03 (Ctrl+C) to child PTY to cancel shell command line without command-not-found
                 let _ = writer.write_all(b"\x03");
                 let _ = writer.flush();
 
@@ -411,6 +530,7 @@ async fn handle_terminal_socket(
     // Main loop: receives client WebSocket messages -> PTY writer
     let mut line_buf = Vec::new();
     let mut ignore_next_lf = false;
+    let mut escape_state = EscapeState::Normal;
 
     while let Some(Ok(ws_msg)) = ws_receiver.next().await {
         match ws_msg {
@@ -439,6 +559,7 @@ async fn handle_terminal_socket(
                     text.as_bytes(),
                     &mut line_buf,
                     &mut ignore_next_lf,
+                    &mut escape_state,
                     &pty_writer,
                     &tx_to_ws,
                     &state,
@@ -471,6 +592,7 @@ async fn handle_terminal_socket(
                     &bytes,
                     &mut line_buf,
                     &mut ignore_next_lf,
+                    &mut escape_state,
                     &pty_writer,
                     &tx_to_ws,
                     &state,
@@ -490,4 +612,49 @@ async fn handle_terminal_socket(
     reader_task.abort();
     let mut child_guard = child.lock().await;
     let _ = child_guard.kill();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_ansi_and_controls_clean() {
+        assert_eq!(strip_ansi_and_controls("gui"), "gui");
+        assert_eq!(strip_ansi_and_controls("gui open foo.scm"), "gui open foo.scm");
+        assert_eq!(strip_ansi_and_controls("gui ratio 60:40"), "gui ratio 60:40");
+        assert_eq!(strip_ansi_and_controls("echo gui"), "echo gui");
+    }
+
+    #[test]
+    fn test_strip_ansi_escape_sequences() {
+        // CSI cursor position response \x1b[1;1R before gui
+        assert_eq!(strip_ansi_and_controls("\x1b[1;1Rgui"), "gui");
+        // CSI device attributes response \x1b[?1;0c before gui
+        assert_eq!(strip_ansi_and_controls("\x1b[?1;0cgui open test.scm"), "gui open test.scm");
+        // Arrow keys \x1b[D, \x1b[C within command
+        assert_eq!(strip_ansi_and_controls("g\x1b[D\x1b[Cui"), "gui");
+    }
+
+    #[test]
+    fn test_strip_terminal_query_prefix_naked() {
+        // In case \x1b[ was separated, naked prefix 1;1R or ?1;2c should also be stripped
+        assert_eq!(strip_ansi_and_controls("1;1Rgui"), "gui");
+        assert_eq!(strip_ansi_and_controls("?1;2cgui help"), "gui help");
+        assert_eq!(strip_ansi_and_controls(">0;10;0cgui close"), "gui close");
+    }
+
+    #[test]
+    fn test_handle_gui_command_help() {
+        let (feedback, action) = handle_gui_command("gui");
+        assert!(feedback.contains("Action: help"));
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn test_handle_gui_command_open() {
+        let (feedback, action) = handle_gui_command("gui open my_code.scm");
+        assert!(feedback.contains("my_code.scm"));
+        assert_eq!(action.unwrap()["file"], "my_code.scm");
+    }
 }
