@@ -12,14 +12,27 @@
 无需安装 Node.js、npm 或额外脚本，直接运行单个自包含可执行程序：
 
 ```bash
+### 1. 一键构建并启动 (源码环境)
+```bash
+# Linux / macOS (自动编译前端、构建 Rust 独立二进制并运行)
+./start
+# 若仅编译构建本地二进制而不启动服务：
+./start --build-only
+
+# Windows (CMD / PowerShell)
+.\start.bat
+# 仅构建二进制：
+.\start.bat --build-only
+```
+
+### 2. 直接运行已构建的独立二进制
+```bash
 # Linux / macOS 直接运行
 ./scheme-ide
 
 # Windows 直接运行
 .\scheme-ide.exe
-
-# 或本地源码启动
-cargo run --manifest-path server/Cargo.toml
+```
 ```
 
 IDE 启动后自动输出就绪横幅并探测网络 IP：
