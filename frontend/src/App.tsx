@@ -15,6 +15,9 @@ export const App: React.FC = () => {
   const editorPanelRef = useRef<EditorPanelHandle>(null);
   const terminalPanelRef = useRef<TerminalPanelHandle>(null);
   const saveTimerRef = useRef<Map<string, number>>(new Map());
+  const processedActionIdsRef = useRef<Set<string | number>>(new Set());
+  const lastGuiActionRef = useRef<{ key: string; time: number }>({ key: '', time: 0 });
+  const openingPathsRef = useRef<Set<string>>(new Set());
 
   const isEditorOpen = openFiles.length > 0;
 
@@ -84,48 +87,75 @@ export const App: React.FC = () => {
   // Open file (from server /api/file, GUI action, or scratch)
   const openFile = useCallback(
     async (filePath: string, initialContent?: string) => {
-      // If already open, switch active tab and ensure left panel is open
-      const existing = openFiles.find((f) => f.path === filePath);
-      if (existing) {
-        setActiveFilePath(filePath);
+      const cleanPath = filePath.trim();
+      if (!cleanPath) return;
+
+      // If already open or being opened, switch active tab and ensure left panel is open
+      if (openingPathsRef.current.has(cleanPath)) {
+        setActiveFilePath(cleanPath);
+        setSplitRatio((r) => (r <= 0.05 ? 0.6 : r));
         return;
       }
 
-      let content = initialContent;
-      if (content === undefined) {
-        try {
-          const res = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`);
-          if (res.ok) {
-            const contentType = res.headers.get('content-type') || '';
-            if (contentType.includes('application/json')) {
-              const data = await res.json();
-              content = data.content ?? data.text ?? '';
-            } else {
-              content = await res.text();
-            }
-          } else {
-            content = '';
-          }
-        } catch {
-          content = '';
+      let alreadyExists = false;
+      setOpenFiles((prev) => {
+        if (prev.some((f) => f.path === cleanPath)) {
+          alreadyExists = true;
         }
+        return prev;
+      });
+
+      if (alreadyExists) {
+        setActiveFilePath(cleanPath);
+        setSplitRatio((r) => (r <= 0.05 ? 0.6 : r));
+        return;
       }
 
-      const newFile: OpenFile = {
-        path: filePath,
-        name: filePath.split('/').pop() || filePath,
-        content: content || '',
-        savedContent: content || '',
-        isModified: false,
-      };
+      openingPathsRef.current.add(cleanPath);
 
-      setOpenFiles((prev) => [...prev, newFile]);
-      setActiveFilePath(filePath);
+      try {
+        let content = initialContent;
+        if (content === undefined) {
+          try {
+            const res = await fetch(`/api/file?path=${encodeURIComponent(cleanPath)}`);
+            if (res.ok) {
+              const contentType = res.headers.get('content-type') || '';
+              if (contentType.includes('application/json')) {
+                const data = await res.json();
+                content = data.content ?? data.text ?? '';
+              } else {
+                content = await res.text();
+              }
+            } else {
+              content = '';
+            }
+          } catch {
+            content = '';
+          }
+        }
 
-      // Restore 60:40 ratio if previously collapsed
-      setSplitRatio((prev) => (prev <= 0.05 ? 0.6 : prev));
+        const newFile: OpenFile = {
+          path: cleanPath,
+          name: cleanPath.split('/').pop() || cleanPath,
+          content: content || '',
+          savedContent: content || '',
+          isModified: false,
+        };
+
+        setOpenFiles((prev) => {
+          if (prev.some((f) => f.path === cleanPath)) {
+            return prev;
+          }
+          return [...prev, newFile];
+        });
+
+        setActiveFilePath(cleanPath);
+        setSplitRatio((prev) => (prev <= 0.05 ? 0.6 : prev));
+      } finally {
+        openingPathsRef.current.delete(cleanPath);
+      }
     },
-    [openFiles]
+    []
   );
 
   // Close file tab
@@ -141,20 +171,23 @@ export const App: React.FC = () => {
       setOpenFiles((prev) => {
         const nextFiles = prev.filter((f) => f.path !== filePath);
 
-        if (activeFilePath === filePath) {
-          if (nextFiles.length > 0) {
-            const idx = prev.findIndex((f) => f.path === filePath);
-            const nextActive = nextFiles[Math.min(idx, nextFiles.length - 1)];
-            setActiveFilePath(nextActive.path);
-          } else {
-            setActiveFilePath(null);
+        setActiveFilePath((currentActive) => {
+          if (currentActive === filePath) {
+            if (nextFiles.length > 0) {
+              const idx = prev.findIndex((f) => f.path === filePath);
+              const nextActive = nextFiles[Math.min(idx, nextFiles.length - 1)];
+              return nextActive.path;
+            } else {
+              return null;
+            }
           }
-        }
+          return currentActive;
+        });
 
         return nextFiles;
       });
     },
-    [activeFilePath]
+    []
   );
 
   // Create new scratch buffer
@@ -172,6 +205,29 @@ export const App: React.FC = () => {
   // Listen for GUI actions from server or terminal
   const handleGuiAction = useCallback(
     (payload: GuiActionPayload) => {
+      // 1. Deduplicate by unique action ID
+      if (payload.id !== undefined && payload.id !== null) {
+        if (processedActionIdsRef.current.has(payload.id)) {
+          return;
+        }
+        processedActionIdsRef.current.add(payload.id);
+        if (processedActionIdsRef.current.size > 200) {
+          const first = processedActionIdsRef.current.values().next().value;
+          if (first !== undefined) processedActionIdsRef.current.delete(first);
+        }
+      }
+
+      // 2. Debounce identical action within 500ms
+      const actionKey = `${payload.action}:${payload.file || ''}:${payload.left || ''}:${payload.right || ''}`;
+      const now = Date.now();
+      if (
+        lastGuiActionRef.current.key === actionKey &&
+        now - lastGuiActionRef.current.time < 500
+      ) {
+        return;
+      }
+      lastGuiActionRef.current = { key: actionKey, time: now };
+
       if (payload.action === 'open' && payload.file) {
         openFile(payload.file);
       } else if (payload.action === 'close') {

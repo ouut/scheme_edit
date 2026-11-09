@@ -72,6 +72,7 @@ export interface TerminalTabItem {
 }
 
 export interface GuiActionPayload {
+  id?: string | number;
   action: 'open' | 'close' | 'ratio';
   file?: string;
   left?: number;

@@ -239,3 +239,44 @@ export function registerMonacoScheme(): void {
 
   isInitialized = true;
 }
+
+/**
+ * Determine if a given file path is a Scheme file (.scm, .ss, .scheme, .sld, .rkt)
+ */
+export function isSchemeFile(filePath: string | null | undefined): boolean {
+  if (!filePath) return false;
+  const clean = filePath.split('?')[0].split('#')[0].toLowerCase();
+  return (
+    clean.endsWith('.scm') ||
+    clean.endsWith('.ss') ||
+    clean.endsWith('.scheme') ||
+    clean.endsWith('.sld') ||
+    clean.endsWith('.rkt')
+  );
+}
+
+/**
+ * Detect Monaco language identifier from file extension
+ */
+export function getLanguageForPath(filePath: string | null | undefined): string {
+  if (!filePath) return 'plaintext';
+  if (isSchemeFile(filePath)) return SCHEME_LANGUAGE_ID;
+
+  const clean = filePath.split('?')[0].split('#')[0].toLowerCase();
+  if (clean.endsWith('.json')) return 'json';
+  if (clean.endsWith('.ts') || clean.endsWith('.tsx')) return 'typescript';
+  if (clean.endsWith('.js') || clean.endsWith('.jsx') || clean.endsWith('.mjs') || clean.endsWith('.cjs')) return 'javascript';
+  if (clean.endsWith('.rs')) return 'rust';
+  if (clean.endsWith('.md') || clean.endsWith('.markdown')) return 'markdown';
+  if (clean.endsWith('.sh') || clean.endsWith('.bash') || clean.endsWith('.zsh')) return 'shell';
+  if (clean.endsWith('.html') || clean.endsWith('.htm')) return 'html';
+  if (clean.endsWith('.css') || clean.endsWith('.scss') || clean.endsWith('.less')) return 'css';
+  if (clean.endsWith('.yml') || clean.endsWith('.yaml')) return 'yaml';
+  if (clean.endsWith('.toml') || clean.endsWith('.ini')) return 'ini';
+  if (clean.endsWith('.py')) return 'python';
+  if (clean.endsWith('.c') || clean.endsWith('.h')) return 'c';
+  if (clean.endsWith('.cpp') || clean.endsWith('.hpp') || clean.endsWith('.cc')) return 'cpp';
+  if (clean.endsWith('.sql')) return 'sql';
+  if (clean.endsWith('.xml') || clean.endsWith('.svg')) return 'xml';
+  return 'plaintext';
+}

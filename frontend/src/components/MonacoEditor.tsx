@@ -5,6 +5,8 @@ import {
   registerMonacoScheme,
   SCHEME_LANGUAGE_ID,
   TOKYO_NIGHT_THEME_ID,
+  isSchemeFile,
+  getLanguageForPath,
 } from '../lib/monacoScheme';
 import {
   applyParinfer,
@@ -90,6 +92,12 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
     const containerRef = useRef<HTMLDivElement>(null);
     const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
     const modelsMapRef = useRef<Map<string, monaco.editor.ITextModel>>(new Map());
+    const viewStatesMapRef = useRef<Map<string, monaco.editor.ICodeEditorViewState | null>>(new Map());
+    const previousFilePathRef = useRef<string | undefined>(undefined);
+
+    const filePathRef = useRef<string | undefined>(filePath);
+    filePathRef.current = filePath;
+
     const parinferModeRef = useRef<ParinferMode>(parinferMode);
     parinferModeRef.current = parinferMode;
 
@@ -113,6 +121,11 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
       async (id: ShortcutId) => {
         const editor = editorRef.current;
         if (!editor) return;
+
+        // Strict Paredit and REPL evaluation only apply to Scheme files!
+        if (!isSchemeFile(filePathRef.current)) {
+          return;
+        }
 
         const res = await dispatchShortcut(
           id,
@@ -167,46 +180,51 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
       },
     }));
 
-    // Switch model when filePath changes
+    // Switch model and preserve view state when filePath changes
     useEffect(() => {
       const editor = editorRef.current;
       if (!editor || !filePath) return;
 
+      const langId = getLanguageForPath(filePath);
       let model = modelsMapRef.current.get(filePath);
+
       if (!model || model.isDisposed()) {
-        const uri = monaco.Uri.parse(`inmemory://scheme/${filePath}`);
-        model = monaco.editor.getModel(uri) || monaco.editor.createModel(initialCode, SCHEME_LANGUAGE_ID, uri);
+        const uri = monaco.Uri.parse(`inmemory://workspace/${encodeURIComponent(filePath)}`);
+        model = monaco.editor.getModel(uri) || monaco.editor.createModel(initialCode, langId, uri);
         modelsMapRef.current.set(filePath, model);
+      } else {
+        if (model.getLanguageId() !== langId) {
+          monaco.editor.setModelLanguage(model, langId);
+        }
       }
+
       if (editor.getModel() !== model) {
+        // Save view state of previous file before switching
+        if (previousFilePathRef.current && editor.getModel()) {
+          viewStatesMapRef.current.set(
+            previousFilePathRef.current,
+            editor.saveViewState()
+          );
+        }
+        previousFilePathRef.current = filePath;
         editor.setModel(model);
+
+        // Restore view state if previously saved
+        const savedViewState = viewStatesMapRef.current.get(filePath);
+        if (savedViewState) {
+          editor.restoreViewState(savedViewState);
+        }
       }
     }, [filePath]);
-
-    // Synchronize initialCode if updated externally
-    useEffect(() => {
-      const editor = editorRef.current;
-      if (!editor) return;
-      const model = editor.getModel();
-      if (model && model.getValue() !== initialCode && !editor.hasWidgetFocus()) {
-        withParinferLock(() => {
-          editor.executeEdits('externalSync', [
-            {
-              range: model.getFullModelRange(),
-              text: initialCode,
-            },
-          ]);
-        });
-      }
-    }, [initialCode]);
 
     // Initialize Monaco instance
     useEffect(() => {
       if (!containerRef.current) return;
 
+      const initialLang = getLanguageForPath(filePath);
       const editor = monaco.editor.create(containerRef.current, {
         value: initialCode,
-        language: SCHEME_LANGUAGE_ID,
+        language: initialLang,
         theme: TOKYO_NIGHT_THEME_ID,
         bracketPairColorization: {
           enabled: true,
@@ -239,9 +257,19 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
 
       // Handle Parinfer on content change & auto-strip macOS dead-key character leaks
       editor.onDidChangeModelContent((e) => {
-        // Auto-revert and intercept stray macOS dead-key characters ('ˆ' or '¨')
+        const currentPath = filePathRef.current;
+        const isScheme = isSchemeFile(currentPath);
+
+        // If NOT a Scheme file, skip all Scheme-specific behaviors (dead keys, parinfer)
+        if (!isScheme) {
+          const text = editor.getValue();
+          onCodeChangeRef.current?.(text);
+          return;
+        }
+
+        // Auto-revert and intercept stray macOS dead-key characters ('ˆ' - unicode dead circumflex)
         for (const change of e.changes) {
-          if (change.text === 'ˆ' || change.text === '^') {
+          if (change.text === 'ˆ') {
             setTimeout(() => {
               const model = editor.getModel();
               if (model) {
@@ -331,25 +359,44 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
 
       /* -----------------------------------------------------------------------
        * Register all 17 Strict Paredit shortcuts in Monaco Editor
+       * (Only active when active model language is 'scheme')
        * --------------------------------------------------------------------- */
 
+      const addSchemeAction = (
+        id: string,
+        label: string,
+        keybindings: number[],
+        shortcutId: ShortcutId
+      ) => {
+        editor.addAction({
+          id,
+          label,
+          keybindings,
+          precondition: 'editorLangId == scheme',
+          run: () => executeAction(shortcutId),
+        });
+      };
+
       // 1. Alt + K : 向外扩选 (Expand)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyK,
-        () => executeAction('expand')
+      addSchemeAction(
+        'scheme.action.expand',
+        'Strict Paredit: Expand',
+        [monaco.KeyMod.Alt | monaco.KeyCode.KeyK],
+        'expand'
       );
 
       // 2. Alt + Enter / Ctrl + Enter : 发射求值 (Eval REPL)
-      editor.addCommand(
-        monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
-        () => executeAction('eval_repl')
-      );
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.Enter,
-        () => executeAction('eval_repl')
+      addSchemeAction(
+        'scheme.action.eval_repl',
+        'Strict Paredit: Eval REPL',
+        [
+          monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
+          monaco.KeyMod.Alt | monaco.KeyCode.Enter,
+        ],
+        'eval_repl'
       );
 
-      // Ctrl + S / Cmd + S : Save file immediately
+      // Ctrl + S / Cmd + S : Save file immediately for ALL files
       editor.addCommand(
         monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
         () => {
@@ -358,125 +405,141 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
       );
 
       // 3. Alt + H : 圆括号包裹 (Wrap Parens, 兼顾 Alt+U/P)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyH,
-        () => executeAction('wrap_parens')
-      );
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyU,
-        () => executeAction('wrap_parens')
-      );
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyP,
-        () => executeAction('wrap_parens')
+      addSchemeAction(
+        'scheme.action.wrap_parens',
+        'Strict Paredit: Wrap Parens',
+        [
+          monaco.KeyMod.Alt | monaco.KeyCode.KeyH,
+          monaco.KeyMod.Alt | monaco.KeyCode.KeyU,
+          monaco.KeyMod.Alt | monaco.KeyCode.KeyP,
+        ],
+        'wrap_parens'
       );
 
       // 4. Alt + Shift + H : 方括号包裹 (Wrap Square, 兼顾 Alt+Shift+U/P)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyH,
-        () => executeAction('wrap_square')
-      );
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyU,
-        () => executeAction('wrap_square')
-      );
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyP,
-        () => executeAction('wrap_square')
+      addSchemeAction(
+        'scheme.action.wrap_square',
+        'Strict Paredit: Wrap Square',
+        [
+          monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyH,
+          monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyU,
+          monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyP,
+        ],
+        'wrap_square'
       );
 
       // 5. Alt + L : 向右吞噬 (Slurp - 右侧向右扩张)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyL,
-        () => executeAction('slurp')
+      addSchemeAction(
+        'scheme.action.slurp',
+        'Strict Paredit: Slurp',
+        [monaco.KeyMod.Alt | monaco.KeyCode.KeyL],
+        'slurp'
       );
 
       // 6. Alt + J : 向左吐出 (Barf - 右侧向左收缩)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyJ,
-        () => executeAction('barf')
+      addSchemeAction(
+        'scheme.action.barf',
+        'Strict Paredit: Barf',
+        [monaco.KeyMod.Alt | monaco.KeyCode.KeyJ],
+        'barf'
       );
 
       // 7. Alt + Shift + K : 向内收缩 (Contract - 方案 A 核心，兼容 Alt+I)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyK,
-        () => executeAction('contract')
-      );
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyI,
-        () => executeAction('contract')
-      );
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyI,
-        () => executeAction('contract')
+      addSchemeAction(
+        'scheme.action.contract',
+        'Strict Paredit: Contract',
+        [
+          monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyK,
+          monaco.KeyMod.Alt | monaco.KeyCode.KeyI,
+          monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyI,
+        ],
+        'contract'
       );
 
       // 8. Alt + 3 : 选中顶级函数 (Defun)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.Digit3,
-        () => executeAction('defun')
+      addSchemeAction(
+        'scheme.action.defun',
+        'Strict Paredit: Select Top-Level Defun',
+        [monaco.KeyMod.Alt | monaco.KeyCode.Digit3],
+        'defun'
       );
 
       // 9. Alt + O : 脱壳解包 (Splice)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyO,
-        () => executeAction('splice')
+      addSchemeAction(
+        'scheme.action.splice',
+        'Strict Paredit: Splice',
+        [monaco.KeyMod.Alt | monaco.KeyCode.KeyO],
+        'splice'
       );
 
       // 10. Alt + 2 : 大步前进 (Forward sexp)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.Digit2,
-        () => executeAction('forward')
+      addSchemeAction(
+        'scheme.action.forward',
+        'Strict Paredit: Forward Sexp',
+        [monaco.KeyMod.Alt | monaco.KeyCode.Digit2],
+        'forward'
       );
 
       // 11. Alt + 1 : 大步后退 (Backward sexp)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.Digit1,
-        () => executeAction('backward')
+      addSchemeAction(
+        'scheme.action.backward',
+        'Strict Paredit: Backward Sexp',
+        [monaco.KeyMod.Alt | monaco.KeyCode.Digit1],
+        'backward'
       );
 
       // 12. Alt + W : 步进深入 (Step Into)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyW,
-        () => executeAction('down')
+      addSchemeAction(
+        'scheme.action.down',
+        'Strict Paredit: Step Into',
+        [monaco.KeyMod.Alt | monaco.KeyCode.KeyW],
+        'down'
       );
 
       // 13. Alt + S : 步退跳出 (Step Out)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyS,
-        () => executeAction('up')
+      addSchemeAction(
+        'scheme.action.up',
+        'Strict Paredit: Step Out',
+        [monaco.KeyMod.Alt | monaco.KeyCode.KeyS],
+        'up'
       );
 
       // 14. Alt + X : 向后整块删除 (Kill sexp, 避开 Chrome 地址栏抢焦)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyX,
-        () => executeAction('kill_sexp')
-      );
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyD,
-        () => executeAction('kill_sexp')
+      addSchemeAction(
+        'scheme.action.kill_sexp',
+        'Strict Paredit: Kill Sexp',
+        [
+          monaco.KeyMod.Alt | monaco.KeyCode.KeyX,
+          monaco.KeyMod.Alt | monaco.KeyCode.KeyD,
+        ],
+        'kill_sexp'
       );
 
       // 15. Alt + \ : 智能格式排版 (Indent, 避开 Chrome 菜单抢焦)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.Backslash,
-        () => executeAction('indent')
-      );
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
-        () => executeAction('indent')
+      addSchemeAction(
+        'scheme.action.indent',
+        'Strict Paredit: Indent Sexp',
+        [
+          monaco.KeyMod.Alt | monaco.KeyCode.Backslash,
+          monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
+        ],
+        'indent'
       );
 
       // 16. Alt + Shift + L : 相邻参数对调 (Transpose)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyL,
-        () => executeAction('transpose')
+      addSchemeAction(
+        'scheme.action.transpose',
+        'Strict Paredit: Transpose',
+        [monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyL],
+        'transpose'
       );
 
       // 17. Alt + Shift + J : 列表切分 (Split)
-      editor.addCommand(
-        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyJ,
-        () => executeAction('split')
+      addSchemeAction(
+        'scheme.action.split',
+        'Strict Paredit: Split Sexp',
+        [monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyJ],
+        'split'
       );
 
       // Timestamp of last triggered Alt shortcut to suppress macOS dead-key compositions
@@ -499,6 +562,11 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
             (target.tagName === 'TEXTAREA' && !target.classList.contains('inputarea')));
 
         if (isExternalInput) {
+          return;
+        }
+
+        // IMPORTANT: Strict Paredit shortcuts only apply to Scheme files!
+        if (!isSchemeFile(filePathRef.current)) {
           return;
         }
 
@@ -667,8 +735,9 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         }
       };
 
-      // Suppress macOS dead-key composition & beforeinput right after an Alt shortcut
+      // Suppress macOS dead-key composition & beforeinput right after an Alt shortcut (Scheme files only)
       const handleCompositionStart = (e: CompositionEvent) => {
+        if (!isSchemeFile(filePathRef.current)) return;
         if (Date.now() - lastAltActionTime < 350) {
           e.preventDefault();
           e.stopPropagation();
@@ -676,16 +745,16 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
       };
 
       const handleBeforeInput = (e: InputEvent) => {
+        if (!isSchemeFile(filePathRef.current)) return;
         const inputData = (e as any).data;
         if (
           inputData === 'ˆ' ||
-          inputData === '^' ||
           inputData === '¨' ||
           Date.now() - lastAltActionTime < 500
         ) {
           e.preventDefault();
           e.stopPropagation();
-          if (inputData === 'ˆ' || inputData === '^') {
+          if (inputData === 'ˆ') {
             lastAltActionTime = Date.now();
             executeAction('contract');
           } else if (inputData === '¨') {

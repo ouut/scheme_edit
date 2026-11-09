@@ -127,7 +127,8 @@ pub async fn gui_action_handler(
 ) -> Json<serde_json::Value> {
     let cmd = payload.cmd.trim().to_lowercase();
 
-    let action_value = match cmd.as_str() {
+    static HTTP_ACTION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(10000);
+    let mut action_value = match cmd.as_str() {
         "open" | "edit" => {
             let file = payload
                 .file
@@ -186,6 +187,9 @@ pub async fn gui_action_handler(
             })
         }
     };
+
+    let id = HTTP_ACTION_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    action_value["id"] = serde_json::json!(id);
 
     if let Ok(json_str) = serde_json::to_string(&action_value) {
         let _ = state.gui_broadcast.send(json_str);

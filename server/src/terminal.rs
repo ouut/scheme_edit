@@ -217,7 +217,10 @@ pub async fn process_terminal_input(
                 let (feedback, action_opt) = handle_gui_command(&line_str);
 
                 // Broadcast GUI action if available
-                if let Some(action_val) = action_opt {
+                if let Some(mut action_val) = action_opt {
+                    static BROADCAST_ACTION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+                    let id = BROADCAST_ACTION_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    action_val["id"] = serde_json::json!(id);
                     if let Ok(json_str) = serde_json::to_string(&action_val) {
                         let _ = state.gui_broadcast.send(json_str);
                     }

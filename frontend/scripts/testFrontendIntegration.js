@@ -121,6 +121,100 @@ function assert(condition, message) {
   assert(r3 && code.slice(r3[0], r3[1]) === '(+ a b)', '7. Monaco Sexp extraction: expands to (+ a b) for Alt+Enter evaluation');
 }
 
+// 8. Scheme file vs Ordinary text file detection
+{
+  function isSchemeFile(filePath) {
+    if (!filePath) return false;
+    const clean = filePath.split('?')[0].split('#')[0].toLowerCase();
+    return (
+      clean.endsWith('.scm') ||
+      clean.endsWith('.ss') ||
+      clean.endsWith('.scheme') ||
+      clean.endsWith('.sld') ||
+      clean.endsWith('.rkt')
+    );
+  }
+
+  function getLanguageForPath(filePath) {
+    if (!filePath) return 'plaintext';
+    if (isSchemeFile(filePath)) return 'scheme';
+    const clean = filePath.split('?')[0].split('#')[0].toLowerCase();
+    if (clean.endsWith('.json')) return 'json';
+    if (clean.endsWith('.ts') || clean.endsWith('.tsx')) return 'typescript';
+    if (clean.endsWith('.js') || clean.endsWith('.jsx')) return 'javascript';
+    if (clean.endsWith('.rs')) return 'rust';
+    if (clean.endsWith('.md')) return 'markdown';
+    if (clean.endsWith('.sh')) return 'shell';
+    if (clean.endsWith('.toml')) return 'ini';
+    return 'plaintext';
+  }
+
+  assert(isSchemeFile('fib.scm') === true, '8a. fib.scm is recognized as Scheme file');
+  assert(isSchemeFile('lib/math.ss') === true, '8b. math.ss is recognized as Scheme file');
+  assert(isSchemeFile('core.rkt') === true, '8c. core.rkt is recognized as Scheme file');
+  assert(isSchemeFile('package.json') === false, '8d. package.json is NOT a Scheme file (ordinary)');
+  assert(isSchemeFile('README.md') === false, '8e. README.md is NOT a Scheme file (ordinary)');
+  assert(isSchemeFile('main.rs') === false, '8f. main.rs is NOT a Scheme file (ordinary)');
+
+  assert(getLanguageForPath('sample.scm') === 'scheme', '8g. sample.scm -> scheme');
+  assert(getLanguageForPath('data.json') === 'json', '8h. data.json -> json');
+  assert(getLanguageForPath('server.rs') === 'rust', '8i. server.rs -> rust');
+  assert(getLanguageForPath('doc.md') === 'markdown', '8j. doc.md -> markdown');
+  assert(getLanguageForPath('unknown.txt') === 'plaintext', '8k. unknown.txt -> plaintext');
+}
+
+// 9. Tab deduplication test (Prevents opening two tabs for same file)
+{
+  let openFiles = [];
+  const openingPaths = new Set();
+
+  function safeOpenFile(path) {
+    const cleanPath = path.trim();
+    if (openingPaths.has(cleanPath)) return;
+    if (openFiles.some(f => f.path === cleanPath)) return;
+
+    openingPaths.add(cleanPath);
+    // Simulate async load then setOpenFiles
+    if (!openFiles.some(f => f.path === cleanPath)) {
+      openFiles = [...openFiles, { path: cleanPath, name: cleanPath, content: '' }];
+    }
+    openingPaths.delete(cleanPath);
+  }
+
+  // Simulate two concurrent gui open calls for sample.scm
+  safeOpenFile('sample.scm');
+  safeOpenFile('sample.scm');
+  assert(openFiles.length === 1 && openFiles[0].path === 'sample.scm', '9. Prevent duplicate tabs: opening sample.scm twice creates exactly ONE tab');
+}
+
+// 10. GUI Action deduplication by unique ID and debounce
+{
+  const seenIds = new Set();
+  const lastAction = { key: '', time: 0 };
+  let actionDispatchCount = 0;
+
+  function dispatchGuiAction(payload) {
+    if (payload.id !== undefined && payload.id !== null) {
+      if (seenIds.has(payload.id)) return false;
+      seenIds.add(payload.id);
+    }
+    const key = `${payload.action}:${payload.file || ''}`;
+    const now = Date.now();
+    if (lastAction.key === key && now - lastAction.time < 500) {
+      return false;
+    }
+    lastAction.key = key;
+    lastAction.time = now;
+    actionDispatchCount++;
+    return true;
+  }
+
+  const first = dispatchGuiAction({ id: 1, action: 'open', file: 'test.scm' });
+  const second = dispatchGuiAction({ id: 1, action: 'open', file: 'test.scm' }); // duplicate ID
+  const third = dispatchGuiAction({ id: 2, action: 'open', file: 'test.scm' }); // debounce identical within 500ms
+  assert(first === true && second === false && third === false && actionDispatchCount === 1, '10. Deduplicate GUI action across broadcast sessions');
+}
+
 console.log('================================================================');
 console.log(`Results: ${passed} passed, ${failed} failed`);
 console.log('================================================================');

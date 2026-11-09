@@ -191,6 +191,7 @@ export const TerminalTab = forwardRef<TerminalTabHandle, TerminalTabProps>(
                 const parsed = JSON.parse(trimmed);
                 if (parsed && parsed.type === 'gui_action') {
                   onGuiActionRef.current({
+                    id: parsed.id,
                     action: parsed.action,
                     file: parsed.file,
                     left: parsed.left,
@@ -211,6 +212,7 @@ export const TerminalTab = forwardRef<TerminalTabHandle, TerminalTabProps>(
                   const parsed = JSON.parse(match[0]);
                   if (parsed && parsed.type === 'gui_action') {
                     onGuiActionRef.current({
+                      id: parsed.id,
                       action: parsed.action,
                       file: parsed.file,
                       left: parsed.left,

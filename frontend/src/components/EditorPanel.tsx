@@ -1,7 +1,8 @@
 import React, { useRef, useImperativeHandle, forwardRef } from 'react';
 import { MonacoEditor, MonacoEditorHandle } from './MonacoEditor';
 import { OpenFile, ParinferMode, ShortcutId } from '../types';
-import { X, FileCode, Plus } from 'lucide-react';
+import { X, FileCode, FileText, Plus } from 'lucide-react';
+import { isSchemeFile } from '../lib/monacoScheme';
 
 export interface EditorPanelProps {
   openFiles: OpenFile[];
@@ -66,6 +67,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
           <div className="flex items-center space-x-1 overflow-x-auto scrollbar-none">
             {openFiles.map((file) => {
               const isActive = file.path === activeFilePath;
+              const isScheme = isSchemeFile(file.path);
 
               return (
                 <div
@@ -78,7 +80,11 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
                   }`}
                   title={file.path}
                 >
-                  <FileCode className="w-3.5 h-3.5 text-[#7aa2f7]" />
+                  {isScheme ? (
+                    <FileCode className="w-3.5 h-3.5 text-[#7aa2f7]" />
+                  ) : (
+                    <FileText className="w-3.5 h-3.5 text-[#a9b1d6]" />
+                  )}
                   <span>{file.name}</span>
 
                   {file.isModified && (
