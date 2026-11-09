@@ -33,12 +33,11 @@
 # Windows 直接运行
 .\scheme-ide.exe
 ```
-```
 
 IDE 启动后自动输出就绪横幅并探测网络 IP：
-* 本机 / 端口转发访问：**`http://localhost:3000`**
-* 宿主机 / 局域网直连：**`http://<自动检测的IP>:3000`**
-* VS Code 远程开发：在底部「端口 (PORTS)」面板转发 `3000` 端口。
+* 本机 / 端口转发访问：**`http://localhost:8085`**
+* 宿主机 / 局域网直连：**`http://<自动检测的IP>:8085`**
+* VS Code 远程开发：在底部「端口 (PORTS)」面板转发 `8085` 端口。
 
 ---
 
@@ -143,7 +142,7 @@ tar -xvf scheme-ide-*.tar.gz
 
 | 环境变量 | 默认值 | 作用说明 |
 | :--- | :--- | :--- |
-| `PORT` | `3000` | IDE 服务监听的 HTTP 端口 |
+| `PORT` | `8085` | IDE 服务监听的 HTTP 端口 |
 | `STEEL_BIN` | 自动探测 | Steel Scheme 可执行文件路径（优先探测二进制同级目录、`~/.cargo/bin/steel` 及 PATH） |
 | `STATIC_DIR` | 内置资源 | 可选，用于开发时覆盖内置前端资源，指定本地磁盘路径（如 `./frontend/dist`） |
 

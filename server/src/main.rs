@@ -1027,7 +1027,7 @@ async fn main() {
         println!("  scheme-ide --steel [STEEL_ARGS...]");
         println!();
         println!("OPTIONS:");
-        println!("  --port <PORT>        Port to listen on [default: 3000, env: PORT]");
+        println!("  --port <PORT>        Port to listen on [default: 8085, env: PORT]");
         println!("  --steel [ARGS...]    Run the embedded Steel Scheme REPL or execute a script");
         println!("  -h, --help           Print help information");
         println!("  -V, --version        Print version information");
@@ -1046,7 +1046,7 @@ async fn main() {
     let mut port: u16 = std::env::var("PORT")
         .ok()
         .and_then(|p| p.parse().ok())
-        .unwrap_or(3000);
+        .unwrap_or(8085);
     for i in 1..args.len() {
         if args[i] == "--port" && i + 1 < args.len() {
             if let Ok(p) = args[i + 1].parse() {
