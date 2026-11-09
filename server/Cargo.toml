@@ -17,6 +17,9 @@ futures-util = "0.3"
 anyhow = "1.0"
 rust-embed = "8"
 mime_guess = "2.0"
+steel-interpreter = { version = "=0.8.2", default-features = false }
+clap = { version = "4", features = ["derive"] }
+which = "8"
 
 [[bin]]
 name = "scheme-ide"

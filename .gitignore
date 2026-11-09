@@ -26,3 +26,7 @@ Thumbs.db
 # Scratch & Temporary
 scratch-*.scm
 scratch/
+scheme-ide
+scheme-ide.exe
+*.tar.gz
+*.zip

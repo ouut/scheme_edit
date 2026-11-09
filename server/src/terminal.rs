@@ -37,16 +37,26 @@ pub fn spawn_pty(
     })?;
 
     let cmd = if cmd_name == "steel" {
-        let bin = if steel_bin.exists() {
-            steel_bin.to_path_buf()
+        let (bin, is_self) = if steel_bin.exists() {
+            let is_curr = std::env::current_exe()
+                .map(|exe| exe == *steel_bin)
+                .unwrap_or(false);
+            (steel_bin.to_path_buf(), is_curr)
+        } else if let Ok(which_steel) = which::which(if cfg!(windows) { "steel.exe" } else { "steel" }) {
+            (which_steel, false)
         } else if Path::new("/root/.cargo/bin/steel").exists() {
-            PathBuf::from("/root/.cargo/bin/steel")
+            (PathBuf::from("/root/.cargo/bin/steel"), false)
+        } else if let Ok(exe) = std::env::current_exe() {
+            (exe, true)
         } else if cfg!(windows) {
-            PathBuf::from("steel.exe")
+            (PathBuf::from("steel.exe"), false)
         } else {
-            PathBuf::from("steel")
+            (PathBuf::from("steel"), false)
         };
         let mut cb = CommandBuilder::new(bin);
+        if is_self {
+            cb.arg("--steel");
+        }
         cb.cwd(workspace_dir);
         cb.env("TERM", "xterm-256color");
         cb.env("COLORTERM", "truecolor");

@@ -39,7 +39,14 @@ pub struct SteelReplProcess {
 
 impl SteelReplProcess {
     pub async fn spawn(steel_bin: &Path) -> Result<Self, std::io::Error> {
-        let mut child = Command::new(steel_bin)
+        let is_self = std::env::current_exe()
+            .map(|exe| exe == *steel_bin)
+            .unwrap_or(false);
+        let mut cmd = Command::new(steel_bin);
+        if is_self {
+            cmd.arg("--steel");
+        }
+        let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -554,6 +561,16 @@ pub fn find_steel_binary() -> PathBuf {
         }
     }
 
+    // 3. Check system PATH
+    if let Ok(which_path) = which::which(if cfg!(windows) { "steel.exe" } else { "steel" }) {
+        return which_path;
+    }
+
+    // 4. Return current executable! (Embedded Steel Scheme)
+    if let Ok(exe) = std::env::current_exe() {
+        return exe;
+    }
+
     if cfg!(windows) {
         PathBuf::from("steel.exe")
     } else {
@@ -563,7 +580,15 @@ pub fn find_steel_binary() -> PathBuf {
 
 /// Detect steel version by running `steel --version`.
 pub fn detect_steel_version(steel_bin: &Path) -> String {
-    if let Ok(output) = std::process::Command::new(steel_bin).arg("--version").output() {
+    let is_self = std::env::current_exe()
+        .map(|exe| exe == *steel_bin)
+        .unwrap_or(false);
+    if is_self {
+        return "0.8.3 (embedded)".to_string();
+    }
+    let mut cmd = std::process::Command::new(steel_bin);
+    cmd.arg("--version");
+    if let Ok(output) = cmd.output() {
         let s = String::from_utf8_lossy(&output.stdout);
         if let Some(v) = s.trim().strip_prefix("steel ") {
             return v.trim().to_string();
@@ -572,7 +597,20 @@ pub fn detect_steel_version(steel_bin: &Path) -> String {
             return s.trim().to_string();
         }
     }
-    "0.8.2".to_string()
+    "0.8.3".to_string()
+}
+
+/// Helper function to detect local network IP address
+pub fn detect_local_ip() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    let local_addr = socket.local_addr().ok()?;
+    let ip = local_addr.ip();
+    if ip.is_loopback() || ip.is_unspecified() {
+        None
+    } else {
+        Some(ip.to_string())
+    }
 }
 
 /// Resolve the directory for static file serving.
@@ -955,7 +993,57 @@ pub fn create_app(state: Arc<AppState>) -> Router {
 
 #[tokio::main]
 async fn main() {
+    let args: Vec<String> = std::env::args().collect();
+
+    // 1. Embedded Steel REPL / evaluator subcommand
+    if args.len() > 1 && (args[1] == "--steel" || args[1] == "steel" || args[1] == "repl") {
+        let mut sub_args = vec![args[0].clone()];
+        sub_args.extend_from_slice(&args[2..]);
+        use clap::Parser;
+        let cli_args = steel_interpreter::SteelCliArgs::parse_from(sub_args);
+        if let Err(e) = steel_interpreter::run(cli_args) {
+            eprintln!("Steel error: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // 2. Help flag
+    if args.len() > 1 && (args[1] == "--help" || args[1] == "-h") {
+        println!("Scheme Strict Paredit IDE");
+        println!();
+        println!("USAGE:");
+        println!("  scheme-ide [OPTIONS]");
+        println!("  scheme-ide --steel [STEEL_ARGS...]");
+        println!();
+        println!("OPTIONS:");
+        println!("  --port <PORT>        Port to listen on [default: 3000, env: PORT]");
+        println!("  --steel [ARGS...]    Run the embedded Steel Scheme REPL or execute a script");
+        println!("  -h, --help           Print help information");
+        println!("  -V, --version        Print version information");
+        return;
+    }
+
+    // 3. Version flag
+    if args.len() > 1 && (args[1] == "--version" || args[1] == "-V") {
+        println!("scheme-ide 0.1.0 (with embedded Steel Scheme 0.8.3)");
+        return;
+    }
+
     tracing_subscriber::fmt::init();
+
+    // Parse port from CLI argument (--port <PORT>) or PORT environment variable
+    let mut port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000);
+    for i in 1..args.len() {
+        if args[i] == "--port" && i + 1 < args.len() {
+            if let Ok(p) = args[i + 1].parse() {
+                port = p;
+            }
+        }
+    }
 
     let steel_bin = find_steel_binary();
     let steel_version = detect_steel_version(&steel_bin);
@@ -970,18 +1058,13 @@ async fn main() {
 
     let state = Arc::new(AppState {
         steel_bin,
-        steel_version,
+        steel_version: steel_version.clone(),
         static_dir,
         serve_embedded: true,
         repl: Arc::new(tokio::sync::Mutex::new(None)),
         eval_counter: Arc::new(AtomicU64::new(1)),
         gui_broadcast,
     });
-
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(3000);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = match tokio::net::TcpListener::bind(addr).await {
@@ -991,6 +1074,28 @@ async fn main() {
             std::process::exit(1);
         }
     };
+
+    let local_ip = detect_local_ip();
+
+    println!("==================================================");
+    println!("  Scheme Strict Paredit IDE");
+    println!("  Port: {port}");
+    println!("  Embedded Frontend: Monaco Editor + xterm.js (Ready)");
+    println!("  Steel Scheme: {steel_version}");
+    println!("==================================================");
+    println!("--------------------------------------------------");
+    println!("🚀 Scheme Editor 启动就绪！");
+    println!("   - 本机 / 端口转发访问:   http://localhost:{port}");
+    if let Some(ref ip) = local_ip {
+        println!("   - 宿主机 / 局域网直连:   http://{ip}:{port}");
+    }
+    println!("--------------------------------------------------");
+    println!("💡 提示: 如果在远程或虚拟机运行，浏览器无法直接打开 localhost:{port}:");
+    if let Some(ref ip) = local_ip {
+        println!("   1. 请在宿主机浏览器直接打开: http://{ip}:{port}");
+    }
+    println!("   2. 或者在 VS Code 底部「端口 (PORTS)」面板添加转发端口 {port}");
+    println!("==================================================");
 
     info!("Listening on http://0.0.0.0:{}", port);
 

@@ -9,18 +9,23 @@
 
 ## 🚀 极速启动
 
-在项目根目录下直接运行：
+无需安装 Node.js、npm 或额外脚本，直接运行单个自包含可执行程序：
 
 ```bash
-./start.sh
-# 或
-./start
+# Linux / macOS 直接运行
+./scheme-ide
+
+# Windows 直接运行
+.\scheme-ide.exe
+
+# 或本地源码启动
+cargo run --manifest-path server/Cargo.toml
 ```
 
-打开浏览器访问：
+IDE 启动后自动输出就绪横幅并探测网络 IP：
 * 本机 / 端口转发访问：**`http://localhost:3000`**
-* 宿主机 (Mac) 浏览器直连：**`http://192.168.64.3:3000`**（自动探测虚拟机 IP）
-* 或在 VS Code 底部「端口 (PORTS)」面板添加转发 `3000` 端口后访问 `http://localhost:3000`。
+* 宿主机 / 局域网直连：**`http://<自动检测的IP>:3000`**
+* VS Code 远程开发：在底部「端口 (PORTS)」面板转发 `3000` 端口。
 
 ---
 
