@@ -42,8 +42,8 @@ jobs:
           cache-dependency-path: 'frontend/package-lock.json'
 
       - name: Build frontend
+        working-directory: frontend
         run: |
-          cd frontend
           npm ci
           npm run build
 
@@ -56,7 +56,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           cargo build --release --target ${{ matrix.platform.target }} --manifest-path server/Cargo.toml
-          tar -czvf ${{ matrix.platform.artifact_name }} -C server/target/${{ matrix.platform.target }}/release scheme-ide
+          curl -sL https://github.com/mattwparas/steel/releases/download/v0.8.2/steel-interpreter-x86_64-unknown-linux-gnu.tar.xz | tar -xJ --strip-components=1 -C server/target/${{ matrix.platform.target }}/release steel-interpreter-x86_64-unknown-linux-gnu/steel || true
+          [ -f server/target/${{ matrix.platform.target }}/release/steel ] && chmod +x server/target/${{ matrix.platform.target }}/release/steel || true
+          tar -czvf ${{ matrix.platform.artifact_name }} -C server/target/${{ matrix.platform.target }}/release scheme-ide $([ -f server/target/${{ matrix.platform.target }}/release/steel ] && echo "steel")
 
       - name: Build binary (macOS Universal)
         if: runner.os == 'macOS'
@@ -68,14 +70,27 @@ jobs:
           lipo -create -output server/target/universal/scheme-ide \
             server/target/aarch64-apple-darwin/release/scheme-ide \
             server/target/x86_64-apple-darwin/release/scheme-ide
-          tar -czvf ${{ matrix.platform.artifact_name }} -C server/target/universal scheme-ide
+          mkdir -p /tmp/steel-arm
+          curl -sL https://github.com/mattwparas/steel/releases/download/v0.8.2/steel-interpreter-aarch64-apple-darwin.tar.xz | tar -xJ --strip-components=1 -C /tmp/steel-arm steel-interpreter-aarch64-apple-darwin/steel || true
+          if [ -f /tmp/steel-arm/steel ]; then
+            cp /tmp/steel-arm/steel server/target/universal/steel
+            chmod +x server/target/universal/steel
+          fi
+          tar -czvf ${{ matrix.platform.artifact_name }} -C server/target/universal scheme-ide $([ -f server/target/universal/steel ] && echo "steel")
 
       - name: Build binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cargo build --release --target ${{ matrix.platform.target }} --manifest-path server/Cargo.toml
-          Compress-Archive -Path server/target/${{ matrix.platform.target }}/release/scheme-ide.exe -DestinationPath ${{ matrix.platform.artifact_name }}
+          try {
+            Invoke-WebRequest -Uri "https://github.com/mattwparas/steel/releases/download/v0.8.2/steel-interpreter-x86_64-pc-windows-msvc.zip" -OutFile "steel.zip"
+            Expand-Archive -Path "steel.zip" -DestinationPath "steel_tmp"
+            Copy-Item "steel_tmp/steel-interpreter-x86_64-pc-windows-msvc/steel.exe" "server/target/${{ matrix.platform.target }}/release/steel.exe"
+            Compress-Archive -Path "server/target/${{ matrix.platform.target }}/release/scheme-ide.exe", "server/target/${{ matrix.platform.target }}/release/steel.exe" -DestinationPath ${{ matrix.platform.artifact_name }}
+          } catch {
+            Compress-Archive -Path "server/target/${{ matrix.platform.target }}/release/scheme-ide.exe" -DestinationPath ${{ matrix.platform.artifact_name }}
+          }
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4

@@ -54,6 +54,12 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Steel Scheme (0.8.2)
+        run: |
+          curl -sL https://github.com/mattwparas/steel/releases/download/v0.8.2/steel-interpreter-x86_64-unknown-linux-gnu.tar.xz | sudo tar -xJ --strip-components=1 -C /usr/local/bin steel-interpreter-x86_64-unknown-linux-gnu/steel
+          sudo chmod +x /usr/local/bin/steel
+          steel --version
+
       - name: Run cargo tests
         run: cargo test --manifest-path server/Cargo.toml
 

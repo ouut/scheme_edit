@@ -568,7 +568,17 @@ pub fn find_steel_binary() -> PathBuf {
 
     // 4. Return current executable! (Embedded Steel Scheme)
     if let Ok(exe) = std::env::current_exe() {
-        return exe;
+        if exe.to_string_lossy().contains("deps") {
+            if let Some(parent) = exe.parent().and_then(|p| p.parent()) {
+                let bin_name = if cfg!(windows) { "scheme-ide.exe" } else { "scheme-ide" };
+                let candidate = parent.join(bin_name);
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+        } else {
+            return exe;
+        }
     }
 
     if cfg!(windows) {
