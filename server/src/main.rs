@@ -1036,7 +1036,7 @@ async fn main() {
 
     // 3. Version flag
     if args.len() > 1 && (args[1] == "--version" || args[1] == "-V") {
-        println!("scheme-ide 0.1.0 (with embedded Steel Scheme 0.8.3)");
+        println!("scheme-ide {} (with embedded Steel Scheme 0.8.2)", env!("CARGO_PKG_VERSION"));
         return;
     }
 

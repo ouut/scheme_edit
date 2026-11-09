@@ -83,14 +83,16 @@ jobs:
         shell: pwsh
         run: |
           cargo build --release --target ${{ matrix.platform.target }} --manifest-path server/Cargo.toml
+          New-Item -ItemType Directory -Force -Path "dist_win"
+          Copy-Item "server/target/${{ matrix.platform.target }}/release/scheme-ide.exe" "dist_win/scheme-ide.exe"
           try {
             Invoke-WebRequest -Uri "https://github.com/mattwparas/steel/releases/download/v0.8.2/steel-interpreter-x86_64-pc-windows-msvc.zip" -OutFile "steel.zip"
             Expand-Archive -Path "steel.zip" -DestinationPath "steel_tmp"
-            Copy-Item "steel_tmp/steel-interpreter-x86_64-pc-windows-msvc/steel.exe" "server/target/${{ matrix.platform.target }}/release/steel.exe"
-            Compress-Archive -Path "server/target/${{ matrix.platform.target }}/release/scheme-ide.exe", "server/target/${{ matrix.platform.target }}/release/steel.exe" -DestinationPath ${{ matrix.platform.artifact_name }}
+            Copy-Item "steel_tmp/steel-interpreter-x86_64-pc-windows-msvc/steel.exe" "dist_win/steel.exe"
           } catch {
-            Compress-Archive -Path "server/target/${{ matrix.platform.target }}/release/scheme-ide.exe" -DestinationPath ${{ matrix.platform.artifact_name }}
+            Write-Warning "Could not download external steel.exe: $_"
           }
+          Compress-Archive -Path "dist_win\*" -DestinationPath ${{ matrix.platform.artifact_name }}
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
