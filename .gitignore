@@ -22,3 +22,7 @@ Thumbs.db
 *.swo
 .vscode/
 .idea/
+
+# Scratch & Temporary
+scratch-*.scm
+scratch/
