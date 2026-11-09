@@ -126,6 +126,51 @@ export const App: React.FC = () => {
     setIsReplOpen(true);
   }, []);
 
+  // Direct evaluation from REPL panel input prompt
+  const handleReplDirectEval = useCallback(
+    async (code: string) => {
+      const startTime = performance.now();
+      try {
+        const res = await fetch('/api/eval', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code }),
+        });
+        const duration = Math.round(performance.now() - startTime);
+        if (res.ok) {
+          const data = await res.json();
+          const isSuccess = data.ok === true || data.success === true;
+          handleEvalResult({
+            code,
+            result: data.result || '',
+            stdout: data.stdout || '',
+            stderr: data.stderr || '',
+            error: isSuccess ? undefined : (data.stderr || data.error || 'Evaluation error'),
+            duration_ms: data.duration_ms ?? duration,
+            success: isSuccess,
+          });
+        } else {
+          const errText = await res.text();
+          handleEvalResult({
+            code,
+            error: `Server HTTP ${res.status}: ${errText}`,
+            duration_ms: duration,
+            success: false,
+          });
+        }
+      } catch (err: any) {
+        const duration = Math.round(performance.now() - startTime);
+        handleEvalResult({
+          code,
+          error: `Network/Connection Error: ${err.message || 'Cannot connect to /api/eval'}`,
+          duration_ms: duration,
+          success: false,
+        });
+      }
+    },
+    [handleEvalResult]
+  );
+
   // Toolbar action handlers
   const handleRunEval = useCallback(() => {
     editorRef.current?.triggerShortcut('eval_repl');
@@ -182,6 +227,7 @@ export const App: React.FC = () => {
             onClear={() => setReplEntries([])}
             isOpen={isReplOpen}
             onToggle={() => setIsReplOpen((v) => !v)}
+            onEval={handleReplDirectEval}
           />
         </div>
 

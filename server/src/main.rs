@@ -1,6 +1,8 @@
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -12,19 +14,135 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::info;
+
+#[derive(Debug)]
+pub enum EvalProcessError {
+    Io(std::io::Error),
+    Exited,
+}
+
+pub struct SteelReplProcess {
+    pub child: Child,
+    pub stdin: ChildStdin,
+    pub stdout_reader: BufReader<ChildStdout>,
+    pub stderr_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+}
+
+impl SteelReplProcess {
+    pub async fn spawn(steel_bin: &Path) -> Result<Self, std::io::Error> {
+        let mut child = Command::new(steel_bin)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()?;
+
+        let stdin = child.stdin.take().expect("failed to open stdin");
+        let stdout = child.stdout.take().expect("failed to open stdout");
+        let stderr = child.stderr.take().expect("failed to open stderr");
+
+        let (stderr_tx, stderr_rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr);
+            let mut line = String::new();
+            while let Ok(n) = reader.read_line(&mut line).await {
+                if n == 0 {
+                    break;
+                }
+                let _ = stderr_tx.send(std::mem::take(&mut line));
+            }
+        });
+
+        let mut stdout_reader = BufReader::new(stdout);
+
+        // Consume initial startup banner and prompt by sending a sentinel
+        let init_sentinel = "---STEEL_INIT_READY---";
+        let mut init_stdin = stdin;
+        init_stdin
+            .write_all(format!("(displayln \"{}\")\n", init_sentinel).as_bytes())
+            .await?;
+        init_stdin.flush().await?;
+
+        let mut line = String::new();
+        while let Ok(n) = stdout_reader.read_line(&mut line).await {
+            if n == 0 || line.contains(init_sentinel) {
+                break;
+            }
+            line.clear();
+        }
+
+        // Drain any initial stderr
+        let mut rx = stderr_rx;
+        while rx.try_recv().is_ok() {}
+
+        Ok(SteelReplProcess {
+            child,
+            stdin: init_stdin,
+            stdout_reader,
+            stderr_rx: rx,
+        })
+    }
+
+    pub async fn eval(
+        &mut self,
+        code: &str,
+        eval_id: u64,
+    ) -> Result<(String, String), EvalProcessError> {
+        // Drain any stale stderr from previous evals
+        while self.stderr_rx.try_recv().is_ok() {}
+
+        let sentinel = format!("---STEEL_SENTINEL_{}---", eval_id);
+        let cmd = format!("{}\n(displayln \"{}\")\n", code, sentinel);
+
+        self.stdin
+            .write_all(cmd.as_bytes())
+            .await
+            .map_err(EvalProcessError::Io)?;
+        self.stdin.flush().await.map_err(EvalProcessError::Io)?;
+
+        let mut raw_stdout = String::new();
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let n = self
+                .stdout_reader
+                .read_line(&mut line)
+                .await
+                .map_err(EvalProcessError::Io)?;
+            if n == 0 {
+                return Err(EvalProcessError::Exited);
+            }
+            if line.contains(&sentinel) {
+                break;
+            }
+            raw_stdout.push_str(&line);
+        }
+
+        // Allow background reader task to drain any pending stderr from OS pipe
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        let mut stderr_acc = String::new();
+        while let Ok(err_line) = self.stderr_rx.try_recv() {
+            stderr_acc.push_str(&err_line);
+        }
+
+        Ok((raw_stdout, stderr_acc))
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
     pub steel_bin: PathBuf,
     pub steel_version: String,
     pub static_dir: Option<PathBuf>,
-    pub session: Arc<tokio::sync::Mutex<Vec<String>>>,
+    pub repl: Arc<tokio::sync::Mutex<Option<SteelReplProcess>>>,
+    pub eval_counter: Arc<AtomicU64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -49,8 +167,39 @@ pub struct EvalResponse {
     pub duration_ms: u64,
 }
 
-/// Extract top-level (define ...) expressions from code
-pub fn extract_definitions(text: &str) -> Vec<String> {
+/// Extract defined identifier name from a (define ...) form
+pub fn extract_defined_name(def: &str) -> Option<String> {
+    let s = def.trim();
+    if !s.starts_with("(define") {
+        return None;
+    }
+    let mut rem = s[7..].trim_start();
+    if rem.starts_with('(') {
+        rem = rem[1..].trim_start();
+    }
+    let mut token = String::new();
+    for c in rem.chars() {
+        if c.is_whitespace()
+            || c == '('
+            || c == ')'
+            || c == '['
+            || c == ']'
+            || c == '"'
+            || c == ';'
+        {
+            break;
+        }
+        token.push(c);
+    }
+    if token.is_empty() {
+        None
+    } else {
+        Some(token)
+    }
+}
+
+/// Extract top-level (define ...) expressions from code, returning (defined_name, full_def_str)
+pub fn extract_definitions(text: &str) -> Vec<(String, String)> {
     let mut defs = Vec::new();
     let bytes = text.as_bytes();
     let n = bytes.len();
@@ -99,7 +248,10 @@ pub fn extract_definitions(text: &str) -> Vec<String> {
                     } else if b == b')' || b == b']' {
                         depth -= 1;
                         if depth == 0 {
-                            defs.push(text[start..=j].to_string());
+                            let def_str = text[start..=j].to_string();
+                            if let Some(name) = extract_defined_name(&def_str) {
+                                defs.push((name, def_str));
+                            }
                             i = j;
                             break;
                         }
@@ -111,6 +263,124 @@ pub fn extract_definitions(text: &str) -> Vec<String> {
         i += 1;
     }
     defs
+}
+
+/// Extract referenced symbols from an expression
+pub fn extract_referenced_symbols(code: &str) -> HashSet<String> {
+    let mut symbols = HashSet::new();
+    let bytes = code.as_bytes();
+    let n = bytes.len();
+    let mut i = 0;
+    let mut in_str = false;
+    let mut escape = false;
+
+    while i < n {
+        let b = bytes[i];
+        if in_str {
+            if escape {
+                escape = false;
+            } else if b == b'\\' {
+                escape = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if b == b';' {
+            while i < n && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+
+        if b == b'"' {
+            in_str = true;
+            i += 1;
+            continue;
+        }
+
+        if b.is_ascii_whitespace()
+            || b == b'('
+            || b == b')'
+            || b == b'['
+            || b == b']'
+            || b == b'{'
+            || b == b'}'
+            || b == b'\''
+            || b == b'`'
+            || b == b','
+        {
+            i += 1;
+            continue;
+        }
+
+        let start = i;
+        while i < n {
+            let cb = bytes[i];
+            if cb.is_ascii_whitespace()
+                || cb == b'('
+                || cb == b')'
+                || cb == b'['
+                || cb == b']'
+                || cb == b'{'
+                || cb == b'}'
+                || cb == b'"'
+                || cb == b';'
+                || cb == b'\''
+                || cb == b'`'
+                || cb == b','
+            {
+                break;
+            }
+            i += 1;
+        }
+        let tok = &code[start..i];
+        // Ignore pure numbers (e.g. 10, -5, 3.14)
+        if !tok.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-')
+            || tok == "-"
+            || tok == "+"
+        {
+            symbols.insert(tok.to_string());
+        }
+    }
+    symbols
+}
+
+/// Resolve only the definitions transitively required by `code`, avoiding unrelated broken definitions
+pub fn resolve_dependent_definitions(code: &str, defs: &[(String, String)]) -> Vec<String> {
+    let mut def_map: HashMap<&str, (&str, usize)> = HashMap::new();
+    for (idx, (name, full_def)) in defs.iter().enumerate() {
+        def_map.insert(name.as_str(), (full_def.as_str(), idx));
+    }
+
+    let mut needed_names = HashSet::new();
+    let initial_symbols = extract_referenced_symbols(code);
+    let mut to_visit: Vec<String> = initial_symbols.into_iter().collect();
+    let mut visited_symbols: HashSet<String> = to_visit.iter().cloned().collect();
+
+    while let Some(sym) = to_visit.pop() {
+        if let Some(&(full_def, _)) = def_map.get(sym.as_str()) {
+            needed_names.insert(sym);
+            let child_symbols = extract_referenced_symbols(full_def);
+            for cs in child_symbols {
+                if !visited_symbols.contains(&cs) {
+                    visited_symbols.insert(cs.clone());
+                    to_visit.push(cs);
+                }
+            }
+        }
+    }
+
+    let trimmed_code = code.trim();
+    let mut result = Vec::new();
+    for (name, full_def) in defs {
+        if needed_names.contains(name.as_str()) && full_def.trim() != trimmed_code {
+            result.push(full_def.clone());
+        }
+    }
+    result
 }
 
 /// Strip ANSI escape codes from terminal output.
@@ -140,8 +410,7 @@ pub fn strip_ansi(s: &str) -> String {
 pub fn parse_repl_output(raw: &str) -> (String, String) {
     let cleaned = strip_ansi(raw);
 
-    // Locate end of ASCII art banner:
-    // The banner ends with `/____/\__/\___/\___/_/`
+    // Locate end of ASCII art banner if present
     let banner_marker = "/____/\\__/\\___/\\___/_/";
     let after_banner = if let Some(idx) = cleaned.find(banner_marker) {
         &cleaned[idx + banner_marker.len()..]
@@ -151,7 +420,6 @@ pub fn parse_repl_output(raw: &str) -> (String, String) {
         &cleaned
     };
 
-    // Replace prompt occurrences with newlines so prompt-separated tokens are cleanly delimited
     let normalized = after_banner.replace("λ > ", "\n");
     let mut stdout_parts = Vec::new();
     let mut results = Vec::new();
@@ -174,7 +442,6 @@ pub fn parse_repl_output(raw: &str) -> (String, String) {
             continue;
         }
 
-        // Check if line contains an evaluation marker "=> "
         if let Some(pos) = trimmed.find("=> ") {
             let prefix = trimmed[..pos].trim();
             let res = trimmed[pos + 3..].trim();
@@ -270,7 +537,6 @@ pub fn find_steel_binary() -> PathBuf {
 pub fn detect_steel_version(steel_bin: &Path) -> String {
     if let Ok(output) = std::process::Command::new(steel_bin).arg("--version").output() {
         let s = String::from_utf8_lossy(&output.stdout);
-        // Output format is typically: "steel 0.8.2\n"
         if let Some(v) = s.trim().strip_prefix("steel ") {
             return v.trim().to_string();
         }
@@ -290,14 +556,16 @@ pub fn resolve_static_dir() -> Option<PathBuf> {
         }
     }
 
-    let default_dist = PathBuf::from("../frontend/dist");
-    if default_dist.exists() {
-        return Some(default_dist);
-    }
-
-    let static_dir = PathBuf::from("./static");
-    if static_dir.exists() {
-        return Some(static_dir);
+    let candidates = [
+        PathBuf::from("./frontend/dist"),
+        PathBuf::from("../frontend/dist"),
+        PathBuf::from("./static"),
+        PathBuf::from("../static"),
+    ];
+    for p in candidates {
+        if p.exists() {
+            return Some(p);
+        }
     }
 
     None
@@ -313,8 +581,10 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthRe
 
 /// POST /api/reset handler
 pub async fn reset_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let mut session = state.session.lock().await;
-    session.clear();
+    let mut repl_guard = state.repl.lock().await;
+    if let Some(mut proc) = repl_guard.take() {
+        let _ = proc.child.kill().await;
+    }
     Json(serde_json::json!({ "ok": true, "message": "REPL session reset" }))
 }
 
@@ -336,141 +606,102 @@ pub async fn eval_handler(
         });
     }
 
+    // Instant syntax check for unclosed parentheses, brackets, or strings
+    if has_unclosed_delimiter(&code) {
+        return Json(EvalResponse {
+            ok: false,
+            result: String::new(),
+            stdout: String::new(),
+            stderr: "error[E09]: Parse: Syntax Error: Unexpected EOF, unclosed delimiter (parenthesis, bracket, or string)".to_string(),
+            duration_ms: 0,
+        });
+    }
+
     let start = Instant::now();
     let trimmed_code = code.trim();
     let is_definition = trimmed_code.starts_with("(define");
 
-    // Build context with definitions to prepend
-    let mut prepended_defs = String::new();
-
-    // 1. Session definitions
-    {
-        let session = state.session.lock().await;
-        for def in session.iter() {
-            prepended_defs.push_str(def);
-            prepended_defs.push('\n');
-        }
-    }
-
-    // 2. Buffer definitions (if buffer is provided)
+    // Dependency-aware definition prepending if buffer is provided
+    let mut prepended = String::new();
     if let Some(ref buffer) = payload.buffer {
-        let buffer_defs = extract_definitions(buffer);
-        for def in buffer_defs {
-            if def.trim() == trimmed_code {
-                continue;
-            }
-            if !prepended_defs.contains(&def) {
-                prepended_defs.push_str(&def);
-                prepended_defs.push('\n');
-            }
+        let defs = extract_definitions(buffer);
+        let dep_defs = resolve_dependent_definitions(&code, &defs);
+        for def in dep_defs {
+            prepended.push_str(&def);
+            prepended.push('\n');
         }
     }
 
-    let full_code = if prepended_defs.is_empty() {
+    let full_code = if prepended.is_empty() {
         code.clone()
     } else {
-        format!("{}\n{}", prepended_defs, code)
+        format!("{}\n{}", prepended, code)
     };
 
-    let mut cmd = Command::new(&state.steel_bin);
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+    let eval_id = state.eval_counter.fetch_add(1, Ordering::SeqCst);
+    let mut repl_guard = state.repl.lock().await;
 
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(e) => {
-            let duration_ms = start.elapsed().as_millis() as u64;
-            return Json(EvalResponse {
-                ok: false,
-                result: String::new(),
-                stdout: String::new(),
-                stderr: format!("Failed to spawn steel process: {e}"),
-                duration_ms,
-            });
+    // Ensure persistent interactive REPL process is spawned and alive
+    if repl_guard.is_none() {
+        match SteelReplProcess::spawn(&state.steel_bin).await {
+            Ok(proc) => *repl_guard = Some(proc),
+            Err(e) => {
+                return Json(EvalResponse {
+                    ok: false,
+                    result: String::new(),
+                    stdout: String::new(),
+                    stderr: format!("Failed to spawn steel process: {e}"),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                });
+            }
         }
-    };
-
-    // Pipe code to child stdin asynchronously
-    if let Some(mut stdin) = child.stdin.take() {
-        let code_bytes = full_code.as_bytes().to_vec();
-        tokio::spawn(async move {
-            let _ = stdin.write_all(&code_bytes).await;
-            let _ = stdin.write_all(b"\n").await;
-            let _ = stdin.flush().await;
-            drop(stdin);
-        });
     }
 
-    // Wait with 5 second timeout
+    let repl = repl_guard.as_mut().unwrap();
     let timeout_duration = Duration::from_secs(5);
-    let wait_res = tokio::time::timeout(timeout_duration, child.wait_with_output()).await;
+    let eval_res = tokio::time::timeout(timeout_duration, repl.eval(&full_code, eval_id)).await;
 
-    match wait_res {
-        Err(_elapsed) => {
-            let duration_ms = start.elapsed().as_millis() as u64;
+    match eval_res {
+        Err(_timeout) => {
+            let _ = repl.child.kill().await;
+            *repl_guard = None;
             Json(EvalResponse {
                 ok: false,
                 result: String::new(),
                 stdout: String::new(),
                 stderr: "Execution timed out (5s limit)".to_string(),
-                duration_ms,
+                duration_ms: start.elapsed().as_millis() as u64,
             })
         }
-        Ok(Err(e)) => {
-            let duration_ms = start.elapsed().as_millis() as u64;
+        Ok(Err(EvalProcessError::Exited)) => {
+            *repl_guard = None;
             Json(EvalResponse {
                 ok: false,
                 result: String::new(),
                 stdout: String::new(),
-                stderr: format!("Process execution error: {e}"),
-                duration_ms,
+                stderr: "REPL process terminated (exit called or crashed)".to_string(),
+                duration_ms: start.elapsed().as_millis() as u64,
             })
         }
-        Ok(Ok(output)) => {
+        Ok(Err(EvalProcessError::Io(e))) => {
+            *repl_guard = None;
+            Json(EvalResponse {
+                ok: false,
+                result: String::new(),
+                stdout: String::new(),
+                stderr: format!("REPL communication error: {e}"),
+                duration_ms: start.elapsed().as_millis() as u64,
+            })
+        }
+        Ok(Ok((raw_stdout, raw_stderr))) => {
             let duration_ms = start.elapsed().as_millis() as u64;
-            let raw_stdout = String::from_utf8_lossy(&output.stdout);
-            let raw_stderr = String::from_utf8_lossy(&output.stderr);
-
             let (stdout, mut result) = parse_repl_output(&raw_stdout);
-            let mut stderr_cleaned = strip_ansi(&raw_stderr).trim().to_string();
+            let stderr_cleaned = strip_ansi(&raw_stderr).trim().to_string();
 
-            // If REPL returned no output, no result, and no error, check if input has an unclosed delimiter
-            if result.is_empty()
-                && stdout.is_empty()
-                && stderr_cleaned.is_empty()
-                && has_unclosed_delimiter(&code)
-            {
-                if let Ok(mut temp) = tempfile::Builder::new().suffix(".scm").tempfile() {
-                    use std::io::Write;
-                    let _ = temp.write_all(code.as_bytes());
-                    let _ = temp.flush();
-                    if let Ok(check_output) =
-                        std::process::Command::new(&state.steel_bin).arg(temp.path()).output()
-                    {
-                        let check_err = String::from_utf8_lossy(&check_output.stderr);
-                        if !check_err.trim().is_empty() {
-                            let temp_path_str = temp.path().to_string_lossy();
-                            let clean_err = check_err.replace(&*temp_path_str, "<input>");
-                            stderr_cleaned = clean_err.trim().to_string();
-                        }
-                    }
-                }
-            }
-
-            let mut ok = output.status.success() && stderr_cleaned.is_empty();
-            if !output.status.success() && stderr_cleaned.is_empty() {
-                stderr_cleaned = format!("Process exited with status: {}", output.status);
-                ok = false;
-            } else if !stderr_cleaned.is_empty() {
-                ok = false;
-            }
+            let ok = stderr_cleaned.is_empty();
 
             if ok {
                 if is_definition {
-                    let mut session = state.session.lock().await;
-                    session.push(trimmed_code.to_string());
                     if result.is_empty() {
                         result = "#<void> (defined)".to_string();
                     }
@@ -548,44 +779,68 @@ pub fn friendly_fallback_html() -> &'static str {
         .endpoints h2 {
             font-size: 1.1rem;
             color: #e4e4e7;
+            margin-bottom: 0.5rem;
         }
-        ul {
-            list-style: none;
-            padding-left: 0;
-        }
-        li {
-            padding: 0.5rem 0;
+        .endpoint {
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
         }
-        .tag {
-            font-size: 0.75rem;
-            font-weight: 700;
-            padding: 0.2rem 0.5rem;
+        .method {
+            padding: 0.15rem 0.4rem;
             border-radius: 4px;
+            font-weight: bold;
+            font-size: 0.75rem;
         }
-        .tag-get { background: #065f46; color: #6ee7b7; }
-        .tag-post { background: #1e40af; color: #93c5fd; }
+        .get { background: #065f46; color: #6ee7b7; }
+        .post { background: #1e40af; color: #93c5fd; }
+        .hint {
+            margin-top: 1.5rem;
+            padding: 0.75rem;
+            background: #18181b;
+            border-left: 3px solid #38bdf8;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            color: #94a3b8;
+        }
     </style>
 </head>
 <body>
     <div class="card">
-        <h1>Scheme Editor Backend</h1>
-        <p>The Rust server is up and running with embedded <strong>Steel Scheme</strong> support.</p>
-        <p>Static frontend build directory was not found. If you are developing the frontend, run the Vite dev server (e.g., on port <code>5173</code>) or build assets into <code>../frontend/dist</code>.</p>
+        <h1>
+            <span>λ</span> Scheme Editor Backend
+        </h1>
+        <p>The backend API server is up and running with embedded <strong>Steel Scheme REPL</strong>.</p>
+        <p>Frontend static files were not found in the configured directory. To view the full IDE, build the frontend:</p>
+        <p><code>cd frontend &amp;&amp; npm run build</code></p>
+        
         <div class="endpoints">
-            <h2>Available API Endpoints:</h2>
-            <ul>
-                <li><span class="tag tag-get">GET</span> <code>/api/health</code> &mdash; Check server and Steel interpreter status</li>
-                <li><span class="tag tag-post">POST</span> <code>/api/eval</code> &mdash; Evaluate Scheme expressions with Steel</li>
-            </ul>
+            <h2>Available API Endpoints</h2>
+            <div class="endpoint">
+                <span class="method get">GET</span>
+                <code>/api/health</code> - Server and Steel status
+            </div>
+            <div class="endpoint">
+                <span class="method post">POST</span>
+                <code>/api/eval</code> - Evaluate Scheme S-expressions
+            </div>
+            <div class="endpoint">
+                <span class="method post">POST</span>
+                <code>/api/reset</code> - Reset REPL session
+            </div>
+        </div>
+
+        <div class="hint">
+            Tip: In development, run Vite dev server via <code>cd frontend &amp;&amp; npm run dev</code>.
         </div>
     </div>
 </body>
 </html>"#
 }
 
+/// Fallback route when requested asset doesn't exist
 pub async fn friendly_fallback_handler() -> impl IntoResponse {
     (
         StatusCode::OK,
@@ -594,6 +849,7 @@ pub async fn friendly_fallback_handler() -> impl IntoResponse {
     )
 }
 
+/// Create the axum app router with all routes and static file handling.
 pub fn create_app(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::permissive();
 
@@ -638,7 +894,8 @@ async fn main() {
         steel_bin,
         steel_version,
         static_dir,
-        session: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+        repl: Arc::new(tokio::sync::Mutex::new(None)),
+        eval_counter: Arc::new(AtomicU64::new(1)),
     });
 
     let port: u16 = std::env::var("PORT")
@@ -679,7 +936,8 @@ mod tests {
             steel_bin,
             steel_version,
             static_dir: None,
-            session: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            repl: Arc::new(tokio::sync::Mutex::new(None)),
+            eval_counter: Arc::new(AtomicU64::new(1)),
         });
         create_app(state)
     }
@@ -688,6 +946,22 @@ mod tests {
     fn test_strip_ansi() {
         let raw = "\x1b[32mhello\x1b[0m world";
         assert_eq!(strip_ansi(raw), "hello world");
+    }
+
+    #[test]
+    fn test_extract_defined_name() {
+        assert_eq!(
+            extract_defined_name("(define (fib n) ...)"),
+            Some("fib".to_string())
+        );
+        assert_eq!(
+            extract_defined_name("(define cards '(1 2 3))"),
+            Some("cards".to_string())
+        );
+        assert_eq!(
+            extract_defined_name("(define\n  (square x)\n  (* x x))"),
+            Some("square".to_string())
+        );
     }
 
     #[test]
@@ -832,6 +1106,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_eval_with_polluted_buffer() {
+        let app = test_app();
+        // Buffer contains deliberately broken definitions from interactive exercises
+        let buffer = r#"
+            (define test-binding
+              (let* (x 100)
+                (+ x 1)))
+
+            (define (check-access u has-permission?)
+              (if (and (user-logged-in? u) (user-admin? u)) has-permission?
+                  "Access Denied"
+                  "Access Granted"))
+
+            (define (fib n)
+              (cond
+                [(= n 0) 0]
+                [(= n 1) 1]
+                [else (+ (fib (- n 1)) (fib (- n 2)))]))
+        "#;
+        // Evaluation of independent expression (+ 1 1) MUST NOT fail
+        let req = Request::builder()
+            .uri("/api/eval")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&EvalRequest {
+                    code: "(+ 1 1)".to_string(),
+                    buffer: Some(buffer.to_string()),
+                })
+                .unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let eval: EvalResponse = serde_json::from_slice(&body).unwrap();
+        assert!(eval.ok, "Expected ok: true, got stderr: {}", eval.stderr);
+        assert_eq!(eval.result, "2");
+    }
+
+    #[tokio::test]
+    async fn test_eval_state_persistence() {
+        let app = test_app();
+        // Step 1: Define variable
+        let req1 = Request::builder()
+            .uri("/api/eval")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"code": "(define my-score 42)"}"#))
+            .unwrap();
+        let resp1 = app.clone().oneshot(req1).await.unwrap();
+        assert_eq!(resp1.status(), StatusCode::OK);
+
+        // Step 2: Use defined variable in next evaluation
+        let req2 = Request::builder()
+            .uri("/api/eval")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"code": "(+ my-score 8)"}"#))
+            .unwrap();
+        let resp2 = app.oneshot(req2).await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::OK);
+
+        let body2 = resp2.into_body().collect().await.unwrap().to_bytes();
+        let eval2: EvalResponse = serde_json::from_slice(&body2).unwrap();
+        assert!(eval2.ok);
+        assert_eq!(eval2.result, "50");
+    }
+
+    #[tokio::test]
     async fn test_eval_displayln_stdout() {
         let app = test_app();
         let code = r#"
@@ -916,6 +1261,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_eval_reset_endpoint() {
+        let app = test_app();
+        // Define x
+        let req1 = Request::builder()
+            .uri("/api/eval")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"code": "(define temp-x 999)"}"#))
+            .unwrap();
+        let resp1 = app.clone().oneshot(req1).await.unwrap();
+        assert_eq!(resp1.status(), StatusCode::OK);
+
+        // Reset
+        let req_reset = Request::builder()
+            .uri("/api/reset")
+            .method("POST")
+            .body(Body::empty())
+            .unwrap();
+        let resp_reset = app.clone().oneshot(req_reset).await.unwrap();
+        assert_eq!(resp_reset.status(), StatusCode::OK);
+
+        // temp-x should now be undefined in new process
+        let req2 = Request::builder()
+            .uri("/api/eval")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"code": "temp-x"}"#))
+            .unwrap();
+        let resp2 = app.oneshot(req2).await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::OK);
+
+        let body2 = resp2.into_body().collect().await.unwrap().to_bytes();
+        let eval2: EvalResponse = serde_json::from_slice(&body2).unwrap();
+        assert!(!eval2.ok);
+        assert!(eval2.stderr.contains("FreeIdentifier") || eval2.stderr.contains("temp-x"));
+    }
+
+    #[tokio::test]
     async fn test_fallback_page() {
         let app = test_app();
         let req = Request::builder()
@@ -931,4 +1314,3 @@ mod tests {
         assert!(html.contains("Scheme Editor Backend"));
     }
 }
-

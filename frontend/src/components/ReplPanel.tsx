@@ -1,5 +1,5 @@
-import React, { useRef, useEffect } from 'react';
-import { Terminal, Trash2, ChevronDown, ChevronUp, Clock, CheckCircle2, AlertCircle } from 'lucide-react';
+import React, { useRef, useEffect, useState } from 'react';
+import { Terminal, Trash2, ChevronDown, ChevronUp, Clock, CheckCircle2, AlertCircle, CornerDownLeft } from 'lucide-react';
 import { EvalResultEntry, ServerStatus } from '../types';
 
 interface ReplPanelProps {
@@ -8,6 +8,7 @@ interface ReplPanelProps {
   onClear: () => void;
   isOpen: boolean;
   onToggle: () => void;
+  onEval?: (code: string) => void;
 }
 
 export const ReplPanel: React.FC<ReplPanelProps> = ({
@@ -16,8 +17,14 @@ export const ReplPanel: React.FC<ReplPanelProps> = ({
   onClear,
   isOpen,
   onToggle,
+  onEval,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const [inputCode, setInputCode] = useState('');
+  const [commandHistory, setCommandHistory] = useState<string[]>([]);
+  const [historyIdx, setHistoryIdx] = useState<number | null>(null);
 
   // Auto-scroll to bottom on new evaluation results
   useEffect(() => {
@@ -26,10 +33,44 @@ export const ReplPanel: React.FC<ReplPanelProps> = ({
     }
   }, [entries, isOpen]);
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = inputCode.trim();
+    if (!trimmed) return;
+    onEval?.(trimmed);
+    setCommandHistory((prev) => [...prev, trimmed]);
+    setHistoryIdx(null);
+    setInputCode('');
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (commandHistory.length === 0) return;
+      const nextIdx =
+        historyIdx === null
+          ? commandHistory.length - 1
+          : Math.max(0, historyIdx - 1);
+      setHistoryIdx(nextIdx);
+      setInputCode(commandHistory[nextIdx]);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (historyIdx === null) return;
+      const nextIdx = historyIdx + 1;
+      if (nextIdx >= commandHistory.length) {
+        setHistoryIdx(null);
+        setInputCode('');
+      } else {
+        setHistoryIdx(nextIdx);
+        setInputCode(commandHistory[nextIdx]);
+      }
+    }
+  };
+
   return (
     <div
       className={`border-t border-[#24283b] bg-[#14151f] flex flex-col transition-all duration-200 select-none ${
-        isOpen ? 'h-64' : 'h-8'
+        isOpen ? 'h-72' : 'h-8'
       }`}
     >
       {/* Panel Header */}
@@ -102,7 +143,7 @@ export const ReplPanel: React.FC<ReplPanelProps> = ({
             <div className="h-full flex flex-col items-center justify-center text-neutral-500 text-xs space-y-1 py-8">
               <div className="text-neutral-400 font-mono text-sm">λ Steel Scheme REPL Ready</div>
               <div className="text-neutral-600 text-[11px]">
-                Select code or place cursor at any S-expression and press{' '}
+                Type in the prompt below or place cursor at any S-expression and press{' '}
                 <kbd className="px-1.5 py-0.5 bg-[#1e202f] border border-[#2d324b] rounded text-cyan-300 text-[10px]">
                   Ctrl + Enter
                 </kbd>{' '}
@@ -190,6 +231,34 @@ export const ReplPanel: React.FC<ReplPanelProps> = ({
             ))
           )}
         </div>
+      )}
+
+      {/* Interactive REPL Prompt Input */}
+      {isOpen && (
+        <form
+          onSubmit={handleSubmit}
+          className="h-10 bg-[#12131d] px-3 flex items-center border-t border-[#24283b] shrink-0 font-mono text-xs"
+        >
+          <span className="text-emerald-400 font-bold select-none mr-2">λ &gt;</span>
+          <input
+            ref={inputRef}
+            type="text"
+            value={inputCode}
+            onChange={(e) => setInputCode(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Type S-expression e.g. (+ 1 2) or (fib 10) and press Enter..."
+            className="flex-1 bg-transparent text-neutral-100 placeholder-neutral-500 text-xs focus:outline-none"
+          />
+          <button
+            type="submit"
+            disabled={!inputCode.trim()}
+            className="ml-2 px-2.5 py-1 rounded bg-emerald-950/80 hover:bg-emerald-800/80 text-emerald-300 border border-emerald-700/50 text-[11px] flex items-center space-x-1 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+            title="Evaluate (Enter)"
+          >
+            <span>Eval</span>
+            <CornerDownLeft className="w-3 h-3 text-emerald-400" />
+          </button>
+        </form>
       )}
     </div>
   );
