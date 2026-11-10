@@ -49,14 +49,14 @@ IDE 启动后自动输出就绪横幅并探测网络 IP：
 * **Tab 2+（Bash）**：独立的 Linux Bash 会话（真实 PTY），支持自由通过 `+` 新建或 `×` 关闭。
 
 ### 2. 动态展屏与文件打开 (`gui open`)
-* 在任意 Bash 终端中输入内置拦截命令打开或编辑文件：
+* 在任意 Bash 终端中输入内置命令打开或编辑文件：
   ```bash
   gui open sample.scm
   # 或简写
   gui edit src/math.scm
   ```
 * 左侧多标签代码编辑区瞬间**自动滑出展开**，默认按 **60 : 40** 黄金比例分屏呈现。
-* Monaco 编辑器立即载入文件，并在顶部标签栏高亮显示。
+* Monaco 编辑器立即载入文件，**光标自动聚焦到该文件首行闪烁**，手不离键盘即可开始输入代码。
 
 ### 3. 动态折叠 (Dynamic Collapse)
 * 当左侧编辑区的所有文件标签被全部关闭时，左侧编辑区自动**平滑折叠回 0% 宽度**，右侧终端重新回归 100% 全屏，还原最纯粹的终端生产力模式。
@@ -70,7 +70,16 @@ IDE 启动后自动输出就绪横幅并探测网络 IP：
   gui ratio 0:100   # 隐藏左侧编辑区
   ```
 
-### 5. Monaco 代码发射与 REPL 自动聚焦联动
+### 5. 全键盘窗口流转与 Tab 轮转 (Tmux / i3 级别体验)
+* **`Alt + Shift + Up`** (Mac: `⌥ ⇧ ↑`)：焦点瞬间移至**代码编辑器**（无打开文件时自动创建便签）。
+* **`Alt + Shift + Down`** (Mac: `⌥ ⇧ ↓`)：焦点瞬间移至 **Shell 终端**（拦截 Xterm 乱码）。
+* **`Alt + Shift + Left / Right`** (Mac: `⌥ ⇧ ← / →`)：在当前活动区内循环切换 Tab（**首尾双向自动回环 Wrap-around**）。
+
+### 6. 工作目录内核级实时记忆与 Tab 继承
+* 后端通过 Linux `/proc/<pid>/cwd` 内核接口实时感知活跃终端当前目录。
+* 在终端 `cd` 到任何子目录后，点击 `+` 新建终端 Tab **自动继承该目录**；同时可执行 `gui cd [dir]` 显式切换基准工作目录。
+
+### 7. Monaco 代码发射与 REPL 自动聚焦联动
 * 在左侧代码编辑区编写 Scheme 代码时：
   * 按下 **`Alt + Enter`** 或 **`Ctrl + Enter`**（Mac: `⌥ ↵` 或 `⌘ ↵`）。
   * 系统自动提取光标所在的最内层有效 S-expression（或选中范围）。
@@ -86,9 +95,10 @@ IDE 启动后自动输出就绪横幅并探测网络 IP：
 
 | 命令 | 说明 | 示例 |
 | :--- | :--- | :--- |
-| `gui open <file>` | 在左侧编辑区打开指定文件 | `gui open fib.scm` |
+| `gui open <file>` | 在左侧编辑区打开指定文件并**自动聚焦光标** | `gui open fib.scm` |
 | `gui edit <file>` | `gui open` 的别名 | `gui edit tests/test.scm` |
 | `gui close [file]` | 关闭当前或指定文件标签页 | `gui close fib.scm` |
+| `gui cd [dir]` | 切换 IDE 后端记忆的工作目录 | `gui cd frontend` |
 | `gui ratio <L:R>` | 调整左侧编辑器与右侧终端比例 | `gui ratio 70:30` |
 | `gui help` | 显示 gui 命令帮助菜单 | `gui help` |
 
@@ -160,27 +170,28 @@ cargo build --release --manifest-path server/Cargo.toml
 
 ---
 
-## 🧪 自动化测试套件
+## 🧪 自动化测试套件 (85 项全绿)
 
 本仓库包含全套单元测试与前后端集成测试：
 
-1. **前端快捷键与交互集成测试（47 项全绿）**：
+1. **前端快捷键与交互集成测试（54 项全绿）**：
    ```bash
-   cd frontend && npm test
+   npm test --prefix frontend
    # 包含：
-   # - testShortcuts.js (18 项 Strict Paredit 快捷键逻辑)
-   # - testFrontendIntegration.js (29 项冷启动、动态展开/折叠、比例计算、CLI 命令拦截解析、防重开标签与 Monaco Sexp 提取)
+   # - testShortcuts.js (19 项 Strict Paredit 快捷键逻辑与严格幂等性测试)
+   # - testFrontendIntegration.js (35 项冷启动、动态分屏折叠、比例计算、CLI 命令拦截、Tab 双向回环轮转与焦点流转)
    ```
 
-2. **后端 Rust 单元与端到端测试（26 项全绿）**：
+2. **后端 Rust 单元与端到端测试（31 项全绿）**：
    ```bash
-   cd server && cargo test
+   cargo test --manifest-path server/Cargo.toml
    # 包含：
    # - 静态嵌入资源 (rust-embed) SPA 路由测试
    # - Steel PTY 与 Bash PTY 生命周期与双向流
    # - WebSocket 终端全链路集成测试
+   # - /proc/<pid>/cwd 内核实时工作目录追踪与继承
    # - CLI gui 命令解析与拦截测试
-   # - 文件读取与写入 API 测试
+   # - 文件读取与写入 API 测试 (基于 current_dir)
    # - HTTP Eval 与会话持久化测试
    ```
 

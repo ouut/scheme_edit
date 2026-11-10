@@ -187,12 +187,12 @@ cards
 | :--- | :--- | :--- |
 | **步进深入 (Step Into)** | **`Alt + W`** | 类似游戏 W 前进深入，瞬间跳进当前括号内部最左侧第一个参数前 |
 | **步退跳出 (Step Out)** | **`Alt + S`** | 类似游戏 S 后退撤出，瞬间跳出当前层，回到外层父括号前置位 |
-| **大步前进 (Forward)** | **`Alt + 2`** | 跨过右侧整组完整 S 表达式（数字 2 向右） |
-| **大步后退 (Backward)** | **`Alt + 1`** | 倒退跨过左侧整组完整 S 表达式（数字 1 向左） |
+| **大步前进 (Forward)** | **`Alt + 2`** | 现代「头部到头部 (Head-to-Head)」走位：直接飞跃右侧整组 S 表达式，跳过注释与空隙，精准落在下一个兄弟项头部 |
+| **大步后退 (Backward)** | **`Alt + 1`** | 现代「头部到头部 (Head-to-Head)」走位：对称反向大步后退，精准落在前一个兄弟项头部（100% 严格可逆） |
 
 * **走位实战连招**：
   在 `(pipeline ...)` 最左侧：
-  `Alt + W`（深入第一层） $\rightarrow$ `Alt + 2`（跨过 step-one 进入 step-two） $\rightarrow$ `Alt + W`（深入 step-two 内部） $\rightarrow$ 瞬间抵达核心逻辑！
+  `Alt + W`（深入第一层） $\rightarrow$ `Alt + 2`（跨过 step-one 进入 step-two 头部） $\rightarrow$ `Alt + W`（深入 step-two 内部） $\rightarrow$ 瞬间抵达核心逻辑！
 
 ---
 
@@ -215,7 +215,8 @@ cards
 * **变形后**：`(list 10 20 30) (40 50 60)`，瞬间裂变为两个独立列表！
 
 #### 练习 C：智能对齐排版（Indent）
-* **操作**：无论代码缩进被弄得多乱，按一下 **`Alt + \`**（反斜杠一键排版，完全避开 Chrome 菜单），Parinfer 会根据括号层级一键自动对齐到教科书级 Lisp 规范！
+* **操作**：无论代码缩进被弄得多乱，按一下 **`Alt + \`**（Mac: `⌥ \`，免浏览器冲突）。
+* **核心优势（严格幂等）**：系统底层通过 AST 树驱动重构排版，具备严格的幂等性（连续按 1 次、2 次或 100 次，文档永远保持整洁对齐，绝对不会像传统工具那样将空格错误插入单词内部造成毁坏）。同时完整支持 Monaco 标准文档格式化命令（`Shift + Alt + F`）。
 
 ---
 
@@ -264,6 +265,25 @@ cards
 
 ---
 
+### 场景 8：终端极客流转与全键盘漫游（Terminal-Centric Traversal）
+
+将编辑器与真实 PTY 终端无缝缝合，双手全程不离主键区：
+
+#### 1. 终端命令行驱动编辑
+* **打开并自动聚焦**：在终端输入 `gui open main.scm` 并回车，左侧编辑面板动态滑出，**光标立刻在第一行闪烁，手不用离开键盘直接打字**。
+* **工作目录自动跟随**：在终端里无论 `cd` 到哪层子目录，后端通过 `/proc/<pid>/cwd` 实时感知，点击 `+` 新建终端 Tab 会**自动留在当前目录**，不用反复打路径。
+* **显式切换目录**：可随时在终端运行 `gui cd [dir]` 显式切换 IDE 后端记忆的工作目录基准。
+
+#### 2. Tmux / i3 级窗口与 Tab 流转
+| 快捷键 | 动作 | 效果 |
+| :--- | :--- | :--- |
+| **`Alt + Shift + Up`** (Mac: `⌥ ⇧ ↑`) | **聚焦编辑器** | 瞬间把光标从终端拉回左侧代码区（若无文件打开，自动新建便签）。 |
+| **`Alt + Shift + Down`** (Mac: `⌥ ⇧ ↓`) | **聚焦终端** | 瞬间把光标从代码区扔进右侧终端，零乱码直接输入命令。 |
+| **`Alt + Shift + Left`** (Mac: `⌥ ⇧ ←`) | **切上一个 Tab** | 在当前区域向左切标签页，**首尾自动回环 (Wrap-around)**。 |
+| **`Alt + Shift + Right`** (Mac: `⌥ ⇧ →`) | **切下一个 Tab** | 在当前区域向右切标签页，**首尾自动回环 (Wrap-around)**。 |
+
+---
+
 ## ⚡ 终极连招速查配方（Muscle Memory Combos）
 
 1. **“闪电包装 + 吞噬” 连招**：
@@ -272,3 +292,5 @@ cards
    `Alt + K`（向外扩选确认范围） $\rightarrow$ 确认高亮区域正是目标 $\rightarrow$ `Alt + X` 或 `Backspace` 一键清除。
 3. **“交互求值闭环” 连招**：
    `Alt + 3`（选中顶级函数） $\rightarrow$ `Alt + Enter`（编译至 REPL） $\rightarrow$ 光标移到底部调用例句或在 REPL 命令行输入 $\rightarrow$ `Enter`（查看最终运行结果）。
+4. **“全键盘终端 $\leftrightarrow$ 编辑器无缝流转” 连招**：
+   `终端输入 gui open foo.scm` $\rightarrow$ `光标自动落入代码区开始敲代码` $\rightarrow$ `Alt + 3` $\rightarrow$ `Alt + Enter`（求值入 REPL） $\rightarrow$ `Alt + Shift + Down`（跳到终端） $\rightarrow$ `执行 git diff 或测试` $\rightarrow$ `Alt + Shift + Up`（跳回代码区继续编码）。
