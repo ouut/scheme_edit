@@ -1,4 +1,5 @@
 import * as monaco from 'monaco-editor';
+import paredit from 'paredit.js';
 
 export const SCHEME_LANGUAGE_ID = 'scheme';
 export const TOKYO_NIGHT_THEME_ID = 'tokyo-night';
@@ -236,6 +237,38 @@ export function registerMonacoScheme(): void {
   monaco.languages.setMonarchTokensProvider(SCHEME_LANGUAGE_ID, schemeTokensProvider);
   monaco.languages.setLanguageConfiguration(SCHEME_LANGUAGE_ID, schemeLanguageConfiguration);
   monaco.editor.defineTheme(TOKYO_NIGHT_THEME_ID, tokyoNightTheme);
+
+  monaco.languages.registerDocumentFormattingEditProvider(SCHEME_LANGUAGE_ID, {
+    provideDocumentFormattingEdits(model) {
+      const text = model.getValue();
+      try {
+        const ast = paredit.parse(text);
+        if (ast) {
+          const res = paredit.editor.indentRange(ast, text, 0, text.length);
+          if (res && res.changes && res.changes.length > 0) {
+            const sorted = [...res.changes].sort((a: any, b: any) => b[1] - a[1]);
+            return sorted.map((ch: any) => {
+              if (ch[0] === 'insert') {
+                const pos = model.getPositionAt(ch[1]);
+                return {
+                  range: new monaco.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column),
+                  text: ch[2] as string,
+                };
+              } else {
+                const posStart = model.getPositionAt(ch[1]);
+                const posEnd = model.getPositionAt(ch[1] + (ch[2] as number));
+                return {
+                  range: new monaco.Range(posStart.lineNumber, posStart.column, posEnd.lineNumber, posEnd.column),
+                  text: '',
+                };
+              }
+            });
+          }
+        }
+      } catch {}
+      return [];
+    },
+  });
 
   isInitialized = true;
 }

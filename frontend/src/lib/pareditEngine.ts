@@ -1201,38 +1201,63 @@ export function indent(editor: monaco.editor.IStandaloneCodeEditor): { success: 
 
   const pos = model.getOffsetAt(editor.getPosition()!);
   const text = model.getValue();
-  const roots = parseSexpressions(text);
-  const top = findTopLevelNode(roots, pos);
-  const { enclosing } = findEnclosingWithParent(roots, pos);
+  const selection = editor.getSelection();
+  const hasSelection = selection && !selection.isEmpty();
 
-  const target = top || enclosing;
-  if (target && target.type === 'list') {
-    const targetText = text.slice(target.start, target.end);
-    const result = parinfer.parenMode(targetText);
-    if (result && result.success && typeof result.text === 'string' && result.text !== targetText) {
-      const pStart = model.getPositionAt(target.start);
-      const pEnd = model.getPositionAt(target.end);
-      const range = new monaco.Range(pStart.lineNumber, pStart.column, pEnd.lineNumber, pEnd.column);
+  // 1. First try paredit.editor.indentRange
+  try {
+    const ast = paredit.parse(text);
+    if (ast) {
+      let startOffset = 0;
+      let endOffset = text.length;
+
+      if (hasSelection) {
+        startOffset = model.getOffsetAt(selection.getStartPosition());
+        endOffset = model.getOffsetAt(selection.getEndPosition());
+      } else {
+        const roots = parseSexpressions(text);
+        const top = findTopLevelNode(roots, pos);
+        const { enclosing } = findEnclosingWithParent(roots, pos);
+        const target = top || enclosing;
+        if (target) {
+          startOffset = target.start;
+          endOffset = target.end;
+        }
+      }
+
+      // Try formatting targeted expression range first
+      let res = paredit.editor.indentRange(ast, text, startOffset, endOffset);
+      if (res && res.changes && res.changes.length > 0) {
+        if (applyPareditResult(editor, res)) {
+          return { success: true, detail: 'Formatted current S-expression' };
+        }
+      }
+
+      // If targeted range had no changes and no selection was active, format entire document
+      if (!hasSelection && (startOffset !== 0 || endOffset !== text.length)) {
+        res = paredit.editor.indentRange(ast, text, 0, text.length);
+        if (res && res.changes && res.changes.length > 0) {
+          if (applyPareditResult(editor, res)) {
+            return { success: true, detail: 'Formatted full document' };
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // 2. Fallback to parinfer
+  try {
+    const fullResult = parinfer.parenMode(text);
+    if (fullResult && fullResult.success && typeof fullResult.text === 'string' && fullResult.text !== text) {
+      const range = model.getFullModelRange();
       withParinferLock(() => {
         editor.pushUndoStop();
-        editor.executeEdits('paredit', [{ range, text: result.text }]);
+        editor.executeEdits('paredit', [{ range, text: fullResult.text }]);
         editor.pushUndoStop();
       });
-      return { success: true, detail: 'Formatted current block' };
+      return { success: true, detail: 'Parinfer formatted document' };
     }
-  }
-
-  // Full document formatting
-  const fullResult = parinfer.parenMode(text);
-  if (fullResult && fullResult.success && typeof fullResult.text === 'string' && fullResult.text !== text) {
-    const range = model.getFullModelRange();
-    withParinferLock(() => {
-      editor.pushUndoStop();
-      editor.executeEdits('paredit', [{ range, text: fullResult.text }]);
-      editor.pushUndoStop();
-    });
-    return { success: true, detail: 'Formatted full document' };
-  }
+  } catch {}
 
   return { success: true, detail: 'Already properly indented' };
 }

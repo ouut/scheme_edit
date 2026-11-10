@@ -528,13 +528,14 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         'kill_sexp'
       );
 
-      // 15. Alt + \ : 智能格式排版 (Indent, 避开 Chrome 菜单抢焦)
+      // 15. Alt + \ / Alt + F / Shift + Alt + F : 智能格式排版 (Indent, 避开 Chrome 菜单抢焦)
       addSchemeAction(
         'scheme.action.indent',
         'Strict Paredit: Indent Sexp',
         [
           monaco.KeyMod.Alt | monaco.KeyCode.Backslash,
           monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
+          monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF,
         ],
         'indent'
       );
@@ -662,6 +663,11 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
             trigger('contract');
             return;
           }
+          if (matchKey('KeyF', 70, [], ['f', 'ƒ'])) {
+            // 15. Shift + Alt + F: 智能格式排版 (Indent, VS Code 通用快捷键)
+            trigger('indent');
+            return;
+          }
         } else {
           // Alt / Option single key combinations:
           if (
@@ -728,14 +734,11 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
             trigger('kill_sexp');
             return;
           }
-          if (matchKey('Backslash', 220, ['KeyF'], ['\\', 'f', '«', 'ƒ'])) {
-            // 15. Alt + \: 智能格式排版 (Indent, 兼容 Alt+F)
+          if (
+            matchKey('Backslash', 220, ['KeyF', 'IntlBackslash'], ['\\', '|', 'f', '«', 'ƒ'])
+          ) {
+            // 15. Alt + \: 智能格式排版 (Indent, 兼容 Alt+F, 兼容各键盘 Backslash)
             trigger('indent');
-            return;
-          }
-          if (matchKey('KeyH', 72, [], ['h', '˙'])) {
-            // 16. Alt + H: 相邻参数对调 (Transpose)
-            trigger('transpose');
             return;
           }
         }
