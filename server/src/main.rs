@@ -155,6 +155,7 @@ pub struct AppState {
     pub repl: Arc<tokio::sync::Mutex<Option<SteelReplProcess>>>,
     pub eval_counter: Arc<AtomicU64>,
     pub gui_broadcast: tokio::sync::broadcast::Sender<String>,
+    pub port: u16,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1005,6 +1006,23 @@ pub fn create_app(state: Arc<AppState>) -> Router {
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
 
+    // 0. CLI GUI subcommand: `scheme-ide gui <args>` or invoked directly as `gui`
+    let invoked_as_gui = args.first()
+        .and_then(|a| Path::new(a).file_name())
+        .and_then(|f| f.to_str())
+        .map(|s| s == "gui" || s == "gui.exe")
+        .unwrap_or(false);
+
+    if invoked_as_gui || (args.len() > 1 && (args[1] == "gui" || args[1] == "--gui")) {
+        let cli_args: Vec<String> = if invoked_as_gui {
+            args.into_iter().skip(1).collect()
+        } else {
+            args.into_iter().skip(2).collect()
+        };
+        terminal::run_gui_cli(&cli_args).await;
+        return;
+    }
+
     // 1. Embedded Steel REPL / evaluator subcommand
     if args.len() > 1 && (args[1] == "--steel" || args[1] == "steel" || args[1] == "repl") {
         let mut sub_args = vec![args[0].clone()];
@@ -1074,6 +1092,7 @@ async fn main() {
         repl: Arc::new(tokio::sync::Mutex::new(None)),
         eval_counter: Arc::new(AtomicU64::new(1)),
         gui_broadcast,
+        port,
     });
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -1136,6 +1155,7 @@ mod tests {
             repl: Arc::new(tokio::sync::Mutex::new(None)),
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
+            port: 8085,
         });
         create_app(state)
     }
@@ -1528,6 +1548,7 @@ mod tests {
             repl: Arc::new(tokio::sync::Mutex::new(None)),
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
+            port: 8085,
         });
         let app = create_app(state);
         let req = Request::builder()
@@ -1691,6 +1712,7 @@ mod tests {
             repl: Arc::new(tokio::sync::Mutex::new(None)),
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
+            port: 8085,
         });
         let app = create_app(state);
 
@@ -1731,7 +1753,7 @@ mod tests {
     #[test]
     fn test_spawn_pty_bash() {
         use std::io::{Read, Write};
-        let (master, mut child) = crate::terminal::spawn_pty("bash", Path::new("steel"), Path::new(".")).unwrap();
+        let (master, mut child) = crate::terminal::spawn_pty("bash", Path::new("steel"), Path::new("."), 8085).unwrap();
         let mut reader = master.try_clone_reader().unwrap();
         let mut writer = master.take_writer().unwrap();
 
@@ -1761,7 +1783,7 @@ mod tests {
     fn test_spawn_pty_steel() {
         use std::io::{Read, Write};
         let steel_bin = find_steel_binary();
-        let (master, mut child) = crate::terminal::spawn_pty("steel", &steel_bin, Path::new(".")).unwrap();
+        let (master, mut child) = crate::terminal::spawn_pty("steel", &steel_bin, Path::new("."), 8085).unwrap();
         let mut reader = master.try_clone_reader().unwrap();
         let mut writer = master.take_writer().unwrap();
 
@@ -1792,6 +1814,9 @@ mod tests {
         use futures_util::{SinkExt, StreamExt};
         use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
         let steel_bin = find_steel_binary();
         let steel_version = detect_steel_version(&steel_bin);
         let (gui_broadcast, _) = tokio::sync::broadcast::channel(100);
@@ -1804,11 +1829,9 @@ mod tests {
             repl: Arc::new(tokio::sync::Mutex::new(None)),
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
+            port: addr.port(),
         });
         let app = create_app(state);
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
 
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -1825,26 +1848,32 @@ mod tests {
             .await
             .unwrap();
 
-        // Send intercepted gui command with escape sequence prefix (simulating ConPTY cursor position report):
+        // Give bash process time to initialize
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // Send gui command: gui open test_live.scm\n
         ws_stream
-            .send(TungsteniteMessage::Text("\x1b[1;1Rgui open test_live.scm\r".to_string()))
+            .send(TungsteniteMessage::Text("gui open test_live.scm\n".to_string()))
             .await
             .unwrap();
 
         let start = Instant::now();
         let mut got_gui_feedback = false;
         let mut got_gui_broadcast = false;
+        let mut collected_output = String::new();
 
         while start.elapsed() < Duration::from_secs(10) {
             match tokio::time::timeout(Duration::from_millis(500), ws_stream.next()).await {
                 Ok(Some(Ok(msg))) => match msg {
                     TungsteniteMessage::Binary(bin) => {
                         let s = String::from_utf8_lossy(&bin);
+                        collected_output.push_str(&s);
                         if s.contains("[GUI]") && s.contains("test_live.scm") {
                             got_gui_feedback = true;
                         }
                     }
                     TungsteniteMessage::Text(txt) => {
+                        collected_output.push_str(&txt);
                         if txt.contains("gui_action") && txt.contains("test_live.scm") {
                             got_gui_broadcast = true;
                         }
@@ -1858,7 +1887,15 @@ mod tests {
             }
         }
 
-        assert!(got_gui_feedback, "Should have received formatted GUI feedback in terminal stream");
-        assert!(got_gui_broadcast, "Should have received JSON gui_action broadcast on WebSocket");
+        assert!(
+            got_gui_feedback,
+            "Should have received formatted GUI feedback in terminal stream. Output so far: {}",
+            collected_output
+        );
+        assert!(
+            got_gui_broadcast,
+            "Should have received JSON gui_action broadcast on WebSocket. Output so far: {}",
+            collected_output
+        );
     }
 }

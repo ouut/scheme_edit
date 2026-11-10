@@ -22,11 +22,316 @@ pub struct TerminalQuery {
     pub cmd: Option<String>,
 }
 
+/// Locate the scheme-ide executable path
+pub fn find_scheme_ide_binary() -> Option<PathBuf> {
+    if let Ok(bin) = std::env::var("SCHEME_IDE_BIN") {
+        let p = PathBuf::from(bin);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        let name = exe.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        let is_deps = exe.to_string_lossy().contains("deps");
+        if !is_deps && (name == "scheme-ide" || name == "scheme-ide.exe") {
+            return Some(exe);
+        }
+    }
+
+    let candidates = [
+        PathBuf::from("/workspace/scheme_edit/server/target/debug/scheme-ide"),
+        PathBuf::from("/workspace/scheme_edit/server/target/release/scheme-ide"),
+        PathBuf::from("/workspace/scheme_edit/scheme-ide"),
+        PathBuf::from("./scheme-ide"),
+        PathBuf::from("scheme-ide"),
+    ];
+
+    for cand in candidates {
+        if cand.exists() {
+            if let Ok(canon) = cand.canonicalize() {
+                return Some(canon);
+            }
+            return Some(cand);
+        }
+    }
+
+    if let Ok(p) = which::which(if cfg!(windows) { "scheme-ide.exe" } else { "scheme-ide" }) {
+        return Some(p);
+    }
+
+    None
+}
+
+/// Normalize path by collapsing `.` and `..` without requiring file existence
+pub fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut components = Vec::new();
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(components.last(), Some(Component::Normal(_))) {
+                    components.pop();
+                } else {
+                    components.push(comp);
+                }
+            }
+            _ => components.push(comp),
+        }
+    }
+    components.into_iter().collect()
+}
+
+/// Send HTTP POST /api/gui using standard Tokio TcpStream
+pub async fn send_gui_http(port: u16, payload: &serde_json::Value) -> Result<(), anyhow::Error> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    let body = serde_json::to_string(payload)?;
+    let request = format!(
+        "POST /api/gui HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        port,
+        body.len(),
+        body
+    );
+
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await?;
+    stream.write_all(request.as_bytes()).await?;
+    stream.flush().await?;
+
+    let mut response = Vec::new();
+    let _ = stream.read_to_end(&mut response).await;
+    Ok(())
+}
+
+/// Run GUI CLI command (`gui open [file]`, `gui edit [file]`, `gui close [file]`, `gui ratio <L:R>`, etc.)
+pub async fn run_gui_cli(args: &[String]) {
+    let port = std::env::var("SCHEME_IDE_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(8085);
+
+    let subcmd = args.first().map(|s| s.trim()).unwrap_or("help");
+
+    match subcmd {
+        "open" | "edit" => {
+            let file_arg = args.get(1).map(|s| s.trim()).unwrap_or("");
+            let resolved_file = if file_arg.is_empty() {
+                "".to_string()
+            } else {
+                let p = Path::new(file_arg);
+                let full = if p.is_absolute() {
+                    p.to_path_buf()
+                } else if let Ok(cwd) = std::env::current_dir() {
+                    cwd.join(p)
+                } else {
+                    p.to_path_buf()
+                };
+                normalize_path(&full).to_string_lossy().to_string()
+            };
+
+            let payload = serde_json::json!({
+                "cmd": "open",
+                "file": resolved_file
+            });
+
+            if let Err(e) = send_gui_http(port, &payload).await {
+                eprintln!("\x1b[31m[GUI Error]\x1b[0m Failed to connect to Scheme IDE on port {port}: {e}");
+            } else {
+                let display_file = if resolved_file.is_empty() {
+                    "scratch-*.scm"
+                } else {
+                    &resolved_file
+                };
+                println!("\x1b[38;2;56;189;248m[GUI]\x1b[0m Action: open {}", display_file);
+            }
+        }
+        "close" => {
+            let file_arg = args.get(1).map(|s| s.trim()).unwrap_or("");
+            let payload = serde_json::json!({
+                "cmd": "close",
+                "file": file_arg
+            });
+
+            if let Err(e) = send_gui_http(port, &payload).await {
+                eprintln!("\x1b[31m[GUI Error]\x1b[0m Failed to connect to Scheme IDE on port {port}: {e}");
+            } else if file_arg.is_empty() {
+                println!("\x1b[38;2;56;189;248m[GUI]\x1b[0m Action: close");
+            } else {
+                println!("\x1b[38;2;56;189;248m[GUI]\x1b[0m Action: close {}", file_arg);
+            }
+        }
+        "ratio" => {
+            let ratio_arg = args.get(1).map(|s| s.trim()).unwrap_or("50:50");
+            let payload = serde_json::json!({
+                "cmd": "ratio",
+                "args": [ratio_arg]
+            });
+
+            if let Err(e) = send_gui_http(port, &payload).await {
+                eprintln!("\x1b[31m[GUI Error]\x1b[0m Failed to connect to Scheme IDE on port {port}: {e}");
+            } else {
+                println!("\x1b[38;2;56;189;248m[GUI]\x1b[0m Action: ratio {}", ratio_arg);
+            }
+        }
+        "help" | "--help" | "-h" | "" => {
+            println!(
+                "\x1b[38;2;56;189;248m[GUI]\x1b[0m Action: help\r\n\
+                 \x20 gui open [file]   - Open file in editor (defaults to scratch-*.scm)\r\n\
+                 \x20 gui edit [file]   - Open file in editor (defaults to scratch-*.scm)\r\n\
+                 \x20 gui close [file]  - Close current or specified file\r\n\
+                 \x20 gui ratio <L:R>   - Adjust editor/terminal ratio (e.g. 60:40)\r\n\
+                 \x20 gui help          - Show this help message"
+            );
+        }
+        other => {
+            println!(
+                "\x1b[38;2;56;189;248m[GUI]\x1b[0m Action: unknown command '{}' (type 'gui help' for commands)",
+                other
+            );
+        }
+    }
+}
+
+/// Ensure a directory containing the `gui` executable/wrapper exists and is ready to be prepended to PATH
+pub fn ensure_gui_helper_bin() -> Result<PathBuf, anyhow::Error> {
+    let helper_dir = std::env::temp_dir().join("scheme-ide-bin");
+    std::fs::create_dir_all(&helper_dir)?;
+
+    let scheme_ide_candidate = find_scheme_ide_binary()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let script_path = helper_dir.join("gui");
+        let script_content = format!(
+            r#"#!/bin/sh
+PORT="${{SCHEME_IDE_PORT:-8085}}"
+CAND="{}"
+
+if [ -n "$SCHEME_IDE_BIN" ] && [ -x "$SCHEME_IDE_BIN" ]; then
+    exec "$SCHEME_IDE_BIN" gui "$@"
+fi
+
+if [ -n "$CAND" ] && [ -x "$CAND" ]; then
+    exec "$CAND" gui "$@"
+fi
+
+if command -v scheme-ide >/dev/null 2>&1; then
+    exec scheme-ide gui "$@"
+fi
+
+# Fallback using curl if scheme-ide binary is not immediately found
+cmd="${{1:-help}}"
+shift 2>/dev/null || true
+case "$cmd" in
+    open|edit)
+        target="$1"
+        if [ -z "$target" ]; then
+            target=""
+        else
+            case "$target" in
+                /*) resolved="$target" ;;
+                *) resolved="$(pwd)/$target" ;;
+            esac
+            target="$resolved"
+        fi
+        if command -v curl >/dev/null 2>&1; then
+            curl -s -X POST "http://127.0.0.1:$PORT/api/gui" \
+                -H "Content-Type: application/json" \
+                -d "{{\"cmd\":\"open\",\"file\":\"$target\"}}" >/dev/null 2>&1 || true
+        fi
+        printf "\033[38;2;56;189;248m[GUI]\033[0m Action: open %s\n" "$target"
+        ;;
+    close)
+        target="$1"
+        if command -v curl >/dev/null 2>&1; then
+            curl -s -X POST "http://127.0.0.1:$PORT/api/gui" \
+                -H "Content-Type: application/json" \
+                -d "{{\"cmd\":\"close\",\"file\":\"$target\"}}" >/dev/null 2>&1 || true
+        fi
+        if [ -n "$target" ]; then
+            printf "\033[38;2;56;189;248m[GUI]\033[0m Action: close %s\n" "$target"
+        else
+            printf "\033[38;2;56;189;248m[GUI]\033[0m Action: close\n"
+        fi
+        ;;
+    ratio)
+        ratio="$1"
+        if command -v curl >/dev/null 2>&1; then
+            curl -s -X POST "http://127.0.0.1:$PORT/api/gui" \
+                -H "Content-Type: application/json" \
+                -d "{{\"cmd\":\"ratio\",\"args\":[\"$ratio\"]}}" >/dev/null 2>&1 || true
+        fi
+        printf "\033[38;2;56;189;248m[GUI]\033[0m Action: ratio %s\n" "$ratio"
+        ;;
+    help|--help|-h)
+        printf "\033[38;2;56;189;248m[GUI]\033[0m Action: help\n"
+        printf "  gui open [file]   - Open file in editor (defaults to scratch-*.scm)\n"
+        printf "  gui edit [file]   - Open file in editor (defaults to scratch-*.scm)\n"
+        printf "  gui close [file]  - Close current or specified file\n"
+        printf "  gui ratio <L:R>   - Adjust editor/terminal ratio (e.g. 60:40)\n"
+        printf "  gui help          - Show this help message\n"
+        ;;
+    *)
+        printf "\033[38;2;56;189;248m[GUI]\033[0m Action: unknown command '%s' (type 'gui help' for commands)\n" "$cmd"
+        ;;
+esac
+"#,
+            scheme_ide_candidate
+        );
+        let _ = std::fs::write(&script_path, &script_content);
+        let _ = std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755));
+
+        // Also try writing /usr/local/bin/gui if writable
+        let usr_local_bin = Path::new("/usr/local/bin/gui");
+        if !usr_local_bin.exists() {
+            let _ = std::fs::copy(&script_path, usr_local_bin);
+            let _ = std::fs::set_permissions(usr_local_bin, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let bat_path = helper_dir.join("gui.bat");
+        let cmd_path = helper_dir.join("gui.cmd");
+        let bat_content = format!(
+            r#"@echo off
+setlocal
+if defined SCHEME_IDE_BIN (
+    "%SCHEME_IDE_BIN%" gui %*
+    exit /b %ERRORLEVEL%
+)
+if exist "{}" (
+    "{}" gui %*
+    exit /b %ERRORLEVEL%
+)
+where scheme-ide >nul 2>nul
+if %ERRORLEVEL% EQU 0 (
+    scheme-ide gui %*
+    exit /b %ERRORLEVEL%
+)
+echo [GUI Error] Cannot find scheme-ide.exe to execute gui command.
+exit /b 1
+"#,
+            scheme_ide_candidate, scheme_ide_candidate
+        );
+        let _ = std::fs::write(&bat_path, &bat_content);
+        let _ = std::fs::write(&cmd_path, &bat_content);
+    }
+
+    Ok(helper_dir)
+}
+
 /// Spawns a PTY pair with the specified command (cmd="steel" or cmd="bash")
 pub fn spawn_pty(
     cmd_name: &str,
     steel_bin: &Path,
     workspace_dir: &Path,
+    port: u16,
 ) -> Result<(Box<dyn MasterPty + Send>, Box<dyn portable_pty::Child + Send + Sync>), anyhow::Error> {
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
@@ -89,6 +394,14 @@ pub fn spawn_pty(
         cb.cwd(workspace_dir);
         cb.env("TERM", "xterm-256color");
         cb.env("COLORTERM", "truecolor");
+
+        // Inject scheme-ide GUI CLI helper directory into PATH so `gui` works everywhere with tab completion
+        if let Ok(helper_dir) = ensure_gui_helper_bin() {
+            let current_path = std::env::var("PATH").unwrap_or_default();
+            let path_sep = if cfg!(windows) { ";" } else { ":" };
+            cb.env("PATH", format!("{}{}{}", helper_dir.display(), path_sep, current_path));
+        }
+        cb.env("SCHEME_IDE_PORT", port.to_string());
         cb
     };
 
@@ -310,122 +623,14 @@ fn strip_terminal_query_prefix(s: &str) -> Option<&str> {
     None
 }
 
-/// Process terminal input stream from WebSocket to child PTY, intercepting "gui " lines
+/// Process terminal input stream from WebSocket to child PTY
 pub async fn process_terminal_input(
     bytes: &[u8],
-    line_buf: &mut Vec<u8>,
-    ignore_next_lf: &mut bool,
-    escape_state: &mut EscapeState,
     pty_writer: &Arc<tokio::sync::Mutex<Box<dyn Write + Send>>>,
-    tx_to_ws: &tokio::sync::mpsc::Sender<Message>,
-    state: &Arc<AppState>,
 ) {
     let mut writer = pty_writer.lock().await;
-    let mut pending_bytes = Vec::new();
-
-    for &b in bytes {
-        if *ignore_next_lf && b == b'\n' {
-            *ignore_next_lf = false;
-            continue;
-        }
-        *ignore_next_lf = false;
-
-        // Escape sequence state machine:
-        // Always push to pending_bytes so child PTY receives ANSI responses/control bytes,
-        // but do NOT push escape sequence bytes into line_buf!
-        match *escape_state {
-            EscapeState::Esc => {
-                pending_bytes.push(b);
-                if b == b'[' {
-                    *escape_state = EscapeState::Csi;
-                } else if b == b']' {
-                    *escape_state = EscapeState::Osc;
-                } else {
-                    *escape_state = EscapeState::Normal;
-                }
-                continue;
-            }
-            EscapeState::Csi => {
-                pending_bytes.push(b);
-                if (0x40..=0x7e).contains(&b) {
-                    *escape_state = EscapeState::Normal;
-                }
-                continue;
-            }
-            EscapeState::Osc => {
-                pending_bytes.push(b);
-                if b == 0x07 {
-                    *escape_state = EscapeState::Normal;
-                }
-                continue;
-            }
-            EscapeState::Normal => {
-                if b == 0x1b {
-                    *escape_state = EscapeState::Esc;
-                    pending_bytes.push(b);
-                    continue;
-                }
-            }
-        }
-
-        if b == b'\r' || b == b'\n' {
-            if b == b'\r' {
-                *ignore_next_lf = true;
-            }
-
-            let raw_str = String::from_utf8_lossy(line_buf);
-            let clean_str = strip_ansi_and_controls(&raw_str);
-            let line_str = clean_str.trim().to_string();
-            let is_gui = line_str == "gui" || line_str.starts_with("gui ") || line_str.starts_with("gui\t");
-
-            if is_gui {
-                line_buf.clear();
-
-                // 1. Flush any pending characters before Ctrl+C
-                if !pending_bytes.is_empty() {
-                    let _ = writer.write_all(&pending_bytes);
-                    pending_bytes.clear();
-                }
-
-                // 2. Send \x03 (Ctrl+C) to child PTY to cancel shell command line without command-not-found
-                let _ = writer.write_all(b"\x03");
-                let _ = writer.flush();
-
-                // 3. Handle GUI command
-                let (feedback, action_opt) = handle_gui_command(&line_str);
-
-                // Broadcast GUI action if available
-                if let Some(mut action_val) = action_opt {
-                    static BROADCAST_ACTION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-                    let id = BROADCAST_ACTION_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    action_val["id"] = serde_json::json!(id);
-                    if let Ok(json_str) = serde_json::to_string(&action_val) {
-                        let _ = state.gui_broadcast.send(json_str);
-                    }
-                }
-
-                // 4. Send formatted feedback to client terminal
-                let _ = tx_to_ws.send(Message::Binary(feedback.into_bytes())).await;
-            } else {
-                line_buf.clear();
-                pending_bytes.push(b);
-            }
-        } else if b == 0x7f || b == 0x08 {
-            line_buf.pop();
-            pending_bytes.push(b);
-        } else if b == 0x15 || b == 0x03 {
-            line_buf.clear();
-            pending_bytes.push(b);
-        } else {
-            line_buf.push(b);
-            pending_bytes.push(b);
-        }
-    }
-
-    if !pending_bytes.is_empty() {
-        let _ = writer.write_all(&pending_bytes);
-        let _ = writer.flush();
-    }
+    let _ = writer.write_all(bytes);
+    let _ = writer.flush();
 }
 
 /// WebSocket route handler: /ws/terminal?tab_id=<id>&cmd=<steel|bash>
@@ -459,7 +664,7 @@ async fn handle_terminal_socket(
         params.tab_id, cmd_name, workspace_dir
     );
 
-    let (pty_master, child) = match spawn_pty(cmd_name, &state.steel_bin, &workspace_dir) {
+    let (pty_master, child) = match spawn_pty(cmd_name, &state.steel_bin, &workspace_dir, state.port) {
         Ok(res) => res,
         Err(e) => {
             error!("Failed to spawn PTY for cmd '{}': {e}", cmd_name);
@@ -528,10 +733,6 @@ async fn handle_terminal_socket(
     });
 
     // Main loop: receives client WebSocket messages -> PTY writer
-    let mut line_buf = Vec::new();
-    let mut ignore_next_lf = false;
-    let mut escape_state = EscapeState::Normal;
-
     while let Some(Ok(ws_msg)) = ws_receiver.next().await {
         match ws_msg {
             Message::Text(text) => {
@@ -555,15 +756,7 @@ async fn handle_terminal_socket(
                     }
                 }
 
-                process_terminal_input(
-                    text.as_bytes(),
-                    &mut line_buf,
-                    &mut ignore_next_lf,
-                    &mut escape_state,
-                    &pty_writer,
-                    &tx_to_ws,
-                    &state,
-                ).await;
+                process_terminal_input(text.as_bytes(), &pty_writer).await;
             }
             Message::Binary(bytes) => {
                 // Check if binary payload is a UTF-8 JSON resize message
@@ -588,15 +781,7 @@ async fn handle_terminal_socket(
                     }
                 }
 
-                process_terminal_input(
-                    &bytes,
-                    &mut line_buf,
-                    &mut ignore_next_lf,
-                    &mut escape_state,
-                    &pty_writer,
-                    &tx_to_ws,
-                    &state,
-                ).await;
+                process_terminal_input(&bytes, &pty_writer).await;
             }
             Message::Ping(p) => {
                 let _ = tx_to_ws.send(Message::Pong(p)).await;
