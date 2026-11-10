@@ -15,6 +15,7 @@ export interface EditorPanelProps {
   onSaveActiveFile?: () => void;
   parinferMode: ParinferMode;
   onShortcutTriggered?: (id: ShortcutId, detail: string, success: boolean) => void;
+  onFocus?: () => void;
 }
 
 export interface EditorPanelHandle {
@@ -36,6 +37,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
       onSaveActiveFile,
       parinferMode,
       onShortcutTriggered,
+      onFocus,
     },
     ref
   ) => {
@@ -60,7 +62,10 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
     }
 
     return (
-      <div className="flex flex-col h-full w-full bg-[#1a1b26] overflow-hidden">
+      <div
+        className="flex flex-col h-full w-full bg-[#1a1b26] overflow-hidden"
+        onMouseDown={onFocus}
+      >
         {/* Editor Tab Bar */}
         <div className="flex items-center justify-between bg-[#16161e] border-b border-[#24283b] h-9 px-2 select-none shrink-0">
           {/* File tabs */}

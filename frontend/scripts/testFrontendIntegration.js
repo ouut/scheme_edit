@@ -230,6 +230,40 @@ function assert(condition, message) {
   assert(getScratchFile([{ path: 'scratch-1.scm' }, { path: 'scratch-2.scm' }]) === 'scratch-3.scm', '11c. Next scratch file is scratch-3.scm when 1 and 2 open');
 }
 
+// 12. Alt + Shift + Direction keys: wrap-around tab navigation
+{
+  function cycleEditorTab(openFiles, activePath, direction) {
+    if (openFiles.length <= 1) return activePath;
+    const idx = openFiles.findIndex(f => f.path === activePath);
+    const delta = direction === 'right' ? 1 : -1;
+    const nextIdx = (idx + delta + openFiles.length) % openFiles.length;
+    return openFiles[nextIdx].path;
+  }
+
+  const files = [{ path: 'a.scm' }, { path: 'b.scm' }, { path: 'c.scm' }];
+  
+  // Right from last wraps to first
+  assert(cycleEditorTab(files, 'c.scm', 'right') === 'a.scm', '12a. Alt+Shift+Right at last file tab wraps to first file');
+  // Left from first wraps to last
+  assert(cycleEditorTab(files, 'a.scm', 'left') === 'c.scm', '12b. Alt+Shift+Left at first file tab wraps to last file');
+  // Normal right
+  assert(cycleEditorTab(files, 'a.scm', 'right') === 'b.scm', '12c. Alt+Shift+Right moves to next file tab');
+  // Normal left
+  assert(cycleEditorTab(files, 'b.scm', 'left') === 'a.scm', '12d. Alt+Shift+Left moves to prev file tab');
+
+  function cycleTerminalTab(tabs, activeId, direction) {
+    if (tabs.length <= 1) return activeId;
+    const idx = tabs.findIndex(t => t.id === activeId);
+    const delta = direction === 'right' ? 1 : -1;
+    const nextIdx = (idx + delta + tabs.length) % tabs.length;
+    return tabs[nextIdx].id;
+  }
+
+  const terminalTabs = [{ id: 'repl' }, { id: 'bash-1' }, { id: 'bash-2' }];
+  assert(cycleTerminalTab(terminalTabs, 'bash-2', 'right') === 'repl', '12e. Alt+Shift+Right at last terminal tab wraps to repl');
+  assert(cycleTerminalTab(terminalTabs, 'repl', 'left') === 'bash-2', '12f. Alt+Shift+Left at first terminal tab wraps to last bash tab');
+}
+
 console.log('================================================================');
 console.log(`Results: ${passed} passed, ${failed} failed`);
 console.log('================================================================');

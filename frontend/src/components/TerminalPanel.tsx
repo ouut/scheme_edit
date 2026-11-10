@@ -5,6 +5,7 @@ import { Plus, X, Terminal as TerminalIcon } from 'lucide-react';
 
 export interface TerminalPanelProps {
   onGuiAction: (payload: GuiActionPayload) => void;
+  onFocus?: () => void;
 }
 
 export interface TerminalPanelHandle {
@@ -13,10 +14,12 @@ export interface TerminalPanelHandle {
   focusActiveTerminal: () => void;
   openBashTab: () => void;
   setActiveTab: (tabId: string) => void;
+  switchPrevTab: () => void;
+  switchNextTab: () => void;
 }
 
 export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(
-  ({ onGuiAction }, ref) => {
+  ({ onGuiAction, onFocus }, ref) => {
     const [tabs, setTabs] = useState<TerminalTabItem[]>([
       { id: 'repl', title: 'λ REPL', cmd: 'steel', closable: false },
     ]);
@@ -76,6 +79,40 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
       }
     }, []);
 
+    // Cycle backwards through terminal tabs with wrap-around
+    const switchPrevTab = useCallback(() => {
+      setTabs((prevTabs) => {
+        if (prevTabs.length <= 1) return prevTabs;
+        setActiveTabId((currentActive) => {
+          const idx = prevTabs.findIndex((t) => t.id === currentActive);
+          const prevIdx = (idx - 1 + prevTabs.length) % prevTabs.length;
+          const nextId = prevTabs[prevIdx].id;
+          setTimeout(() => {
+            tabRefs.current.get(nextId)?.focus();
+          }, 30);
+          return nextId;
+        });
+        return prevTabs;
+      });
+    }, []);
+
+    // Cycle forwards through terminal tabs with wrap-around
+    const switchNextTab = useCallback(() => {
+      setTabs((prevTabs) => {
+        if (prevTabs.length <= 1) return prevTabs;
+        setActiveTabId((currentActive) => {
+          const idx = prevTabs.findIndex((t) => t.id === currentActive);
+          const nextIdx = (idx + 1) % prevTabs.length;
+          const nextId = prevTabs[nextIdx].id;
+          setTimeout(() => {
+            tabRefs.current.get(nextId)?.focus();
+          }, 30);
+          return nextId;
+        });
+        return prevTabs;
+      });
+    }, []);
+
     // Expose methods to parent
     useImperativeHandle(ref, () => ({
       sendToRepl: (code: string) => {
@@ -95,10 +132,19 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
       setActiveTab: (tabId: string) => {
         setActiveTabId(tabId);
       },
+      switchPrevTab: () => {
+        switchPrevTab();
+      },
+      switchNextTab: () => {
+        switchNextTab();
+      },
     }));
 
     return (
-      <div className="flex flex-col h-full w-full bg-[#1a1b26] overflow-hidden">
+      <div
+        className="flex flex-col h-full w-full bg-[#1a1b26] overflow-hidden"
+        onMouseDown={onFocus}
+      >
         {/* Terminal Tab Bar */}
         <div className="flex items-center justify-between bg-[#16161e] border-b border-[#24283b] h-9 px-2 select-none shrink-0">
           {/* Tabs row */}
@@ -174,6 +220,7 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
                   cmd={tab.cmd}
                   isActive={isTabActive}
                   onGuiAction={onGuiAction}
+                  onFocus={onFocus}
                 />
               </div>
             );

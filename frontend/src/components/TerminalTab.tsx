@@ -9,6 +9,7 @@ export interface TerminalTabProps {
   cmd: 'steel' | 'bash';
   isActive: boolean;
   onGuiAction: (payload: GuiActionPayload) => void;
+  onFocus?: () => void;
 }
 
 export interface TerminalTabHandle {
@@ -19,7 +20,7 @@ export interface TerminalTabHandle {
 }
 
 export const TerminalTab = forwardRef<TerminalTabHandle, TerminalTabProps>(
-  ({ id, cmd, isActive, onGuiAction }, ref) => {
+  ({ id, cmd, isActive, onGuiAction, onFocus }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const termRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
@@ -29,6 +30,9 @@ export const TerminalTab = forwardRef<TerminalTabHandle, TerminalTabProps>(
 
     const onGuiActionRef = useRef(onGuiAction);
     onGuiActionRef.current = onGuiAction;
+
+    const onFocusRef = useRef(onFocus);
+    onFocusRef.current = onFocus;
 
     const isActiveRef = useRef(isActive);
     isActiveRef.current = isActive;
@@ -126,6 +130,22 @@ export const TerminalTab = forwardRef<TerminalTabHandle, TerminalTabProps>(
       const fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
       term.open(containerRef.current);
+
+      // Prevent Xterm from intercepting Alt+Shift+Arrow navigation
+      term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+        if (
+          event.altKey &&
+          event.shiftKey &&
+          ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)
+        ) {
+          return false;
+        }
+        return true;
+      });
+
+      term.textarea?.addEventListener('focus', () => {
+        onFocusRef.current?.();
+      });
 
       termRef.current = term;
       fitAddonRef.current = fitAddon;

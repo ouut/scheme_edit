@@ -10,6 +10,7 @@ export const App: React.FC = () => {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [parinferMode] = useState<ParinferMode>('paren');
   const [scratchCounter, setScratchCounter] = useState<number>(1);
+  const [activePane, setActivePane] = useState<'editor' | 'terminal'>('editor');
 
   const containerRef = useRef<HTMLDivElement>(null);
   const editorPanelRef = useRef<EditorPanelHandle>(null);
@@ -156,6 +157,10 @@ export const App: React.FC = () => {
 
         setActiveFilePath(cleanPath);
         setSplitRatio((prev) => (prev <= 0.05 ? 0.6 : prev));
+        setActivePane('editor');
+        setTimeout(() => {
+          editorPanelRef.current?.focus();
+        }, 60);
       } finally {
         openingPathsRef.current.delete(cleanPath);
       }
@@ -246,6 +251,10 @@ export const App: React.FC = () => {
         } else {
           handleNewScratchFile();
         }
+        setActivePane('editor');
+        setTimeout(() => {
+          editorPanelRef.current?.focus();
+        }, 80);
       } else if (payload.action === 'close') {
         if (payload.file) {
           closeFile(payload.file);
@@ -321,6 +330,98 @@ export const App: React.FC = () => {
     }
   }, [splitRatio, isDragging, isEditorOpen]);
 
+  // Cycle backwards through open file tabs with wrap-around
+  const switchPrevEditorTab = useCallback(() => {
+    setOpenFiles((currentOpenFiles) => {
+      if (currentOpenFiles.length <= 1) return currentOpenFiles;
+      setActiveFilePath((currentActive) => {
+        const idx = currentOpenFiles.findIndex((f) => f.path === currentActive);
+        const prevIdx = (idx - 1 + currentOpenFiles.length) % currentOpenFiles.length;
+        const nextPath = currentOpenFiles[prevIdx].path;
+        setTimeout(() => {
+          editorPanelRef.current?.focus();
+        }, 30);
+        return nextPath;
+      });
+      return currentOpenFiles;
+    });
+  }, []);
+
+  // Cycle forwards through open file tabs with wrap-around
+  const switchNextEditorTab = useCallback(() => {
+    setOpenFiles((currentOpenFiles) => {
+      if (currentOpenFiles.length <= 1) return currentOpenFiles;
+      setActiveFilePath((currentActive) => {
+        const idx = currentOpenFiles.findIndex((f) => f.path === currentActive);
+        const nextIdx = (idx + 1) % currentOpenFiles.length;
+        const nextPath = currentOpenFiles[nextIdx].path;
+        setTimeout(() => {
+          editorPanelRef.current?.focus();
+        }, 30);
+        return nextPath;
+      });
+      return currentOpenFiles;
+    });
+  }, []);
+
+  // Global shortcut navigation: Alt + Shift + Arrows
+  // - Alt + Shift + Up: Focus Code Editor (creates scratch file if none open)
+  // - Alt + Shift + Down: Focus Shell Terminal
+  // - Alt + Shift + Left: If Editor focused -> cycle Editor tabs backwards with wrap-around; If Terminal focused -> cycle Terminal tabs backwards with wrap-around
+  // - Alt + Shift + Right: If Editor focused -> cycle Editor tabs forwards with wrap-around; If Terminal focused -> cycle Terminal tabs forwards with wrap-around
+  useEffect(() => {
+    const handleKeyDownCapture = (e: KeyboardEvent) => {
+      if (!e.altKey || !e.shiftKey) return;
+
+      if (e.code === 'ArrowUp') {
+        e.preventDefault();
+        e.stopPropagation();
+        setActivePane('editor');
+        if (openFiles.length === 0) {
+          handleNewScratchFile();
+        } else {
+          setTimeout(() => {
+            editorPanelRef.current?.focus();
+          }, 30);
+        }
+      } else if (e.code === 'ArrowDown') {
+        e.preventDefault();
+        e.stopPropagation();
+        setActivePane('terminal');
+        setTimeout(() => {
+          terminalPanelRef.current?.focusActiveTerminal();
+        }, 30);
+      } else if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (activePane === 'editor') {
+          switchPrevEditorTab();
+        } else {
+          terminalPanelRef.current?.switchPrevTab();
+        }
+      } else if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (activePane === 'editor') {
+          switchNextEditorTab();
+        } else {
+          terminalPanelRef.current?.switchNextTab();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDownCapture, { capture: true });
+    return () => {
+      window.removeEventListener('keydown', handleKeyDownCapture, { capture: true });
+    };
+  }, [
+    activePane,
+    openFiles.length,
+    handleNewScratchFile,
+    switchPrevEditorTab,
+    switchNextEditorTab,
+  ]);
+
   // Window resize handler
   useEffect(() => {
     const handleResize = () => {
@@ -361,6 +462,7 @@ export const App: React.FC = () => {
             onSendToRepl={handleSendToRepl}
             onSaveActiveFile={handleSaveActiveFile}
             parinferMode={parinferMode}
+            onFocus={() => setActivePane('editor')}
           />
         </div>
       )}
@@ -380,10 +482,12 @@ export const App: React.FC = () => {
         className={`h-full overflow-hidden flex flex-col bg-[#1a1b26] flex-1 ${
           isDragging ? 'transition-none' : 'transition-[width] duration-150 ease-out'
         }`}
+        onMouseDown={() => setActivePane('terminal')}
       >
         <TerminalPanel
           ref={terminalPanelRef}
           onGuiAction={handleGuiAction}
+          onFocus={() => setActivePane('terminal')}
         />
       </div>
     </div>

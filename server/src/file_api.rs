@@ -29,6 +29,10 @@ pub struct GuiApiRequest {
     #[serde(default)]
     pub file: Option<String>,
     #[serde(default)]
+    pub dir: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
     pub left: Option<u32>,
     #[serde(default)]
     pub right: Option<u32>,
@@ -54,6 +58,7 @@ pub fn resolve_path(rel_or_abs: &str) -> PathBuf {
 
 /// GET /api/file?path=<path>
 pub async fn read_file_handler(
+    State(state): State<Arc<AppState>>,
     Query(params): Query<FileQuery>,
 ) -> Json<serde_json::Value> {
     if params.path.trim().is_empty() {
@@ -64,7 +69,13 @@ pub async fn read_file_handler(
         }));
     }
 
-    let target_path = resolve_path(&params.path);
+    let p = Path::new(&params.path);
+    let target_path = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        let base = state.current_dir.read().await.clone();
+        base.join(p)
+    };
 
     match tokio::fs::read_to_string(&target_path).await {
         Ok(content) => Json(serde_json::json!({
@@ -84,6 +95,7 @@ pub async fn read_file_handler(
 
 /// POST /api/file
 pub async fn write_file_handler(
+    State(state): State<Arc<AppState>>,
     Json(payload): Json<WriteFileRequest>,
 ) -> Json<serde_json::Value> {
     if payload.path.trim().is_empty() {
@@ -94,7 +106,13 @@ pub async fn write_file_handler(
         }));
     }
 
-    let target_path = resolve_path(&payload.path);
+    let p = Path::new(&payload.path);
+    let target_path = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        let base = state.current_dir.read().await.clone();
+        base.join(p)
+    };
 
     if let Some(parent) = target_path.parent() {
         if let Err(e) = tokio::fs::create_dir_all(parent).await {
@@ -127,8 +145,48 @@ pub async fn gui_action_handler(
 ) -> Json<serde_json::Value> {
     let cmd = payload.cmd.trim().to_lowercase();
 
+    // Synchronize working directory if reported in payload
+    if let Some(ref cwd) = payload.cwd {
+        let p = PathBuf::from(cwd);
+        if p.is_dir() {
+            *state.current_dir.write().await = p;
+        }
+    }
+
     static HTTP_ACTION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(10000);
     let mut action_value = match cmd.as_str() {
+        "cd" => {
+            let target_dir = payload
+                .dir
+                .or(payload.file)
+                .or_else(|| payload.args.first().cloned())
+                .unwrap_or_default();
+            let p = if target_dir.is_empty() {
+                state.current_dir.read().await.clone()
+            } else {
+                let path = Path::new(&target_dir);
+                if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    let base = state.current_dir.read().await.clone();
+                    base.join(path)
+                }
+            };
+            if p.is_dir() {
+                let canon = p.canonicalize().unwrap_or(p);
+                *state.current_dir.write().await = canon.clone();
+                serde_json::json!({
+                    "type": "gui_action",
+                    "action": "cd",
+                    "dir": canon.to_string_lossy().to_string()
+                })
+            } else {
+                return Json(serde_json::json!({
+                    "ok": false,
+                    "error": format!("Directory not found: {}", target_dir)
+                }));
+            }
+        }
         "open" | "edit" => {
             let file = payload
                 .file

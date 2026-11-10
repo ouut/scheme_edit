@@ -131,9 +131,14 @@ pub async fn run_gui_cli(args: &[String]) {
                 normalize_path(&full).to_string_lossy().to_string()
             };
 
+            let cwd_str = std::env::current_dir()
+                .ok()
+                .map(|p| normalize_path(&p).to_string_lossy().to_string());
+
             let payload = serde_json::json!({
                 "cmd": "open",
-                "file": resolved_file
+                "file": resolved_file,
+                "cwd": cwd_str
             });
 
             if let Err(e) = send_gui_http(port, &payload).await {
@@ -145,6 +150,38 @@ pub async fn run_gui_cli(args: &[String]) {
                     &resolved_file
                 };
                 println!("\x1b[38;2;56;189;248m[GUI]\x1b[0m Action: open {}", display_file);
+            }
+        }
+        "cd" => {
+            let dir_arg = args.get(1).map(|s| s.trim()).unwrap_or("");
+            let resolved_dir = if dir_arg.is_empty() {
+                if let Ok(cwd) = std::env::current_dir() {
+                    cwd.to_string_lossy().to_string()
+                } else {
+                    ".".to_string()
+                }
+            } else {
+                let p = Path::new(dir_arg);
+                let full = if p.is_absolute() {
+                    p.to_path_buf()
+                } else if let Ok(cwd) = std::env::current_dir() {
+                    cwd.join(p)
+                } else {
+                    p.to_path_buf()
+                };
+                normalize_path(&full).to_string_lossy().to_string()
+            };
+
+            let payload = serde_json::json!({
+                "cmd": "cd",
+                "dir": resolved_dir,
+                "cwd": resolved_dir
+            });
+
+            if let Err(e) = send_gui_http(port, &payload).await {
+                eprintln!("\x1b[31m[GUI Error]\x1b[0m Failed to connect to Scheme IDE on port {port}: {e}");
+            } else {
+                println!("\x1b[38;2;56;189;248m[GUI]\x1b[0m Working directory set: {}", resolved_dir);
             }
         }
         "close" => {
@@ -181,6 +218,7 @@ pub async fn run_gui_cli(args: &[String]) {
                  \x20 gui open [file]   - Open file in editor (defaults to scratch-*.scm)\r\n\
                  \x20 gui edit [file]   - Open file in editor (defaults to scratch-*.scm)\r\n\
                  \x20 gui close [file]  - Close current or specified file\r\n\
+                 \x20 gui cd [dir]      - Change working directory\r\n\
                  \x20 gui ratio <L:R>   - Adjust editor/terminal ratio (e.g. 60:40)\r\n\
                  \x20 gui help          - Show this help message"
             );
@@ -351,6 +389,36 @@ if exist "{}" (
     }
 
     Ok(helper_dir)
+}
+
+/// Get current working directory of a process by PID on Linux
+pub fn get_process_cwd(pid: u32) -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(link) = std::fs::read_link(format!("/proc/{}/cwd", pid)) {
+            if link.exists() && link.is_dir() {
+                return Some(link);
+            }
+        }
+    }
+    let _ = pid;
+    None
+}
+
+/// Retrieve the active working directory, updating from the active terminal PID if available
+pub async fn get_current_working_dir(state: &AppState) -> PathBuf {
+    use std::sync::atomic::Ordering;
+    let pid = state.active_terminal_pid.load(Ordering::Relaxed);
+    if pid > 0 {
+        if let Some(cwd) = get_process_cwd(pid) {
+            let mut guard = state.current_dir.write().await;
+            if *guard != cwd {
+                *guard = cwd.clone();
+            }
+            return cwd;
+        }
+    }
+    state.current_dir.read().await.clone()
 }
 
 /// Spawns a PTY pair with the specified command (cmd="steel" or cmd="bash")
@@ -675,16 +743,7 @@ async fn handle_terminal_socket(
     state: Arc<AppState>,
 ) {
     let cmd_name = params.cmd.as_deref().unwrap_or("bash");
-    let workspace_dir = std::env::var("WORKSPACE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let def = PathBuf::from("/workspace/scheme_edit");
-            if def.exists() {
-                def
-            } else {
-                PathBuf::from(".")
-            }
-        });
+    let workspace_dir = get_current_working_dir(&state).await;
 
     info!(
         "Terminal session connected: tab_id={:?}, cmd={}, dir={:?}",
@@ -698,6 +757,11 @@ async fn handle_terminal_socket(
             return;
         }
     };
+
+    let child_pid = child.process_id();
+    if let Some(pid) = child_pid {
+        state.active_terminal_pid.store(pid, std::sync::atomic::Ordering::Relaxed);
+    }
 
     let pty_reader = match pty_master.try_clone_reader() {
         Ok(r) => r,
@@ -784,6 +848,23 @@ async fn handle_terminal_socket(
                 }
 
                 process_terminal_input(text.as_bytes(), &pty_writer).await;
+
+                if let Some(pid) = child_pid {
+                    state.active_terminal_pid.store(pid, std::sync::atomic::Ordering::Relaxed);
+                    if text.contains('\r') || text.contains('\n') {
+                        let state_clone = state.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(60)).await;
+                            if let Some(new_cwd) = get_process_cwd(pid) {
+                                let mut guard = state_clone.current_dir.write().await;
+                                if *guard != new_cwd {
+                                    info!("Terminal PID {} updated working directory: {:?}", pid, new_cwd);
+                                    *guard = new_cwd;
+                                }
+                            }
+                        });
+                    }
+                }
             }
             Message::Binary(bytes) => {
                 // Check if binary payload is a UTF-8 JSON resize message
@@ -809,6 +890,23 @@ async fn handle_terminal_socket(
                 }
 
                 process_terminal_input(&bytes, &pty_writer).await;
+
+                if let Some(pid) = child_pid {
+                    state.active_terminal_pid.store(pid, std::sync::atomic::Ordering::Relaxed);
+                    if bytes.contains(&b'\r') || bytes.contains(&b'\n') {
+                        let state_clone = state.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(60)).await;
+                            if let Some(new_cwd) = get_process_cwd(pid) {
+                                let mut guard = state_clone.current_dir.write().await;
+                                if *guard != new_cwd {
+                                    info!("Terminal PID {} updated working directory: {:?}", pid, new_cwd);
+                                    *guard = new_cwd;
+                                }
+                            }
+                        });
+                    }
+                }
             }
             Message::Ping(p) => {
                 let _ = tx_to_ws.send(Message::Pong(p)).await;

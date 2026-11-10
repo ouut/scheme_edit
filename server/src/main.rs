@@ -156,6 +156,8 @@ pub struct AppState {
     pub eval_counter: Arc<AtomicU64>,
     pub gui_broadcast: tokio::sync::broadcast::Sender<String>,
     pub port: u16,
+    pub current_dir: Arc<tokio::sync::RwLock<PathBuf>>,
+    pub active_terminal_pid: Arc<std::sync::atomic::AtomicU32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1084,6 +1086,17 @@ async fn main() {
 
     let (gui_broadcast, _) = tokio::sync::broadcast::channel(100);
 
+    let initial_cwd = std::env::var("WORKSPACE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let def = PathBuf::from("/workspace/scheme_edit");
+            if def.exists() {
+                def
+            } else {
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            }
+        });
+
     let state = Arc::new(AppState {
         steel_bin,
         steel_version: steel_version.clone(),
@@ -1093,6 +1106,8 @@ async fn main() {
         eval_counter: Arc::new(AtomicU64::new(1)),
         gui_broadcast,
         port,
+        current_dir: Arc::new(tokio::sync::RwLock::new(initial_cwd)),
+        active_terminal_pid: Arc::new(std::sync::atomic::AtomicU32::new(0)),
     });
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -1156,6 +1171,8 @@ mod tests {
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
             port: 8085,
+            current_dir: Arc::new(tokio::sync::RwLock::new(PathBuf::from("/workspace/scheme_edit"))),
+            active_terminal_pid: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         });
         create_app(state)
     }
@@ -1549,6 +1566,8 @@ mod tests {
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
             port: 8085,
+            current_dir: Arc::new(tokio::sync::RwLock::new(PathBuf::from("/workspace/scheme_edit"))),
+            active_terminal_pid: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         });
         let app = create_app(state);
         let req = Request::builder()
@@ -1713,8 +1732,10 @@ mod tests {
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
             port: 8085,
+            current_dir: Arc::new(tokio::sync::RwLock::new(PathBuf::from("/workspace/scheme_edit"))),
+            active_terminal_pid: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         });
-        let app = create_app(state);
+        let app = create_app(state.clone());
 
         // POST /api/gui with open
         let req = Request::builder()
@@ -1739,8 +1760,19 @@ mod tests {
             .header("content-type", "application/json")
             .body(Body::from(r#"{"cmd": "ratio", "args": ["65:35"]}"#))
             .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+
+        // POST /api/gui with cd
+        let req = Request::builder()
+            .uri("/api/gui")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"cmd": "cd", "dir": "frontend"}"#))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(state.current_dir.read().await.file_name().unwrap(), "frontend");
 
         let broadcast_msg2 = rx.recv().await.unwrap();
         let parsed2: serde_json::Value = serde_json::from_str(&broadcast_msg2).unwrap();
@@ -1830,6 +1862,8 @@ mod tests {
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
             port: addr.port(),
+            current_dir: Arc::new(tokio::sync::RwLock::new(PathBuf::from("/workspace/scheme_edit"))),
+            active_terminal_pid: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         });
         let app = create_app(state);
 
