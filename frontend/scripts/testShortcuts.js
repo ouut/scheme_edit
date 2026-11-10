@@ -147,9 +147,19 @@ function assert(condition, message) {
 
 // 15. Alt + \ : Indent
 {
-  const src = '(define (test x)\n(+ x 1))';
-  const res = parinfer.parenMode(src);
-  assert(res.success && res.text.includes(' (+ x 1))'), '15. Indent (Alt+\\): aligns S-expression according to Lisp indentation');
+  const src = `(define (test x)\n(+ x 1))`;
+  const ast = paredit.parse(src);
+  const res = paredit.editor.indentRange(ast, src, 0, src.length);
+  assert(res && res.src && res.src.includes('  (+ x 1))'), '15. Indent (Alt+\\): aligns S-expression according to Lisp indentation');
+
+  // Verify idempotence: running indent 5 consecutive times produces identical output without corrupting tokens
+  let current = src;
+  for (let i = 0; i < 5; i++) {
+    const a = paredit.parse(current);
+    const r = paredit.editor.indentRange(a, current, 0, current.length);
+    if (r && r.src) current = r.src;
+  }
+  assert(current === res.src, '15b. Indent idempotence: repeated Alt+\\ maintains clean indentation without mangling code');
 }
 
 // 16. Alt + Shift + L : Transpose

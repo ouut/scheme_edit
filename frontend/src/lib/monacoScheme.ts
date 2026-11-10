@@ -243,26 +243,15 @@ export function registerMonacoScheme(): void {
       const text = model.getValue();
       try {
         const ast = paredit.parse(text);
-        if (ast) {
+        if (ast && (!ast.errors || ast.errors.length === 0)) {
           const res = paredit.editor.indentRange(ast, text, 0, text.length);
-          if (res && res.changes && res.changes.length > 0) {
-            const sorted = [...res.changes].sort((a: any, b: any) => b[1] - a[1]);
-            return sorted.map((ch: any) => {
-              if (ch[0] === 'insert') {
-                const pos = model.getPositionAt(ch[1]);
-                return {
-                  range: new monaco.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column),
-                  text: ch[2] as string,
-                };
-              } else {
-                const posStart = model.getPositionAt(ch[1]);
-                const posEnd = model.getPositionAt(ch[1] + (ch[2] as number));
-                return {
-                  range: new monaco.Range(posStart.lineNumber, posStart.column, posEnd.lineNumber, posEnd.column),
-                  text: '',
-                };
-              }
-            });
+          if (res && typeof res.src === 'string' && res.src !== text) {
+            return [
+              {
+                range: model.getFullModelRange(),
+                text: res.src,
+              },
+            ];
           }
         }
       } catch {}
