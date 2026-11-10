@@ -924,7 +924,7 @@ export function splice(editor: monaco.editor.IStandaloneCodeEditor): { success: 
 }
 
 /**
- * 10. Alt + 1 : 大步前进 (Forward sexp)
+ * 10. Alt + 2 : 大步前进 (Forward sexp)
  */
 export function forwardSexp(editor: monaco.editor.IStandaloneCodeEditor): { success: boolean; detail?: string } {
   const model = editor.getModel();
@@ -936,8 +936,27 @@ export function forwardSexp(editor: monaco.editor.IStandaloneCodeEditor): { succ
   // 1. Try paredit.js forwardSexp
   try {
     const ast = paredit.parse(text);
-    const target = paredit.navigator.forwardSexp(ast, pos);
-    if (target !== null && target !== undefined && target > pos) {
+    const end = paredit.navigator.forwardSexp(ast, pos);
+    if (end !== null && end !== undefined && end > pos) {
+      let target = end;
+      let i = end;
+      while (i < text.length) {
+        if (/\s/.test(text[i])) {
+          i++;
+          continue;
+        }
+        if (text[i] === ';') {
+          while (i < text.length && text[i] !== '\n') {
+            i++;
+          }
+          continue;
+        }
+        break;
+      }
+      if (i < text.length && !/[)\]}]/.test(text[i])) {
+        target = i;
+      }
+
       const p = model.getPositionAt(target);
       editor.setPosition(p);
       editor.revealPosition(p);
@@ -949,16 +968,17 @@ export function forwardSexp(editor: monaco.editor.IStandaloneCodeEditor): { succ
   const roots = parseSexpressions(text);
   const { enclosing } = findEnclosingWithParent(roots, pos);
   const siblings = enclosing ? enclosing.children || [] : roots;
-  const next = siblings.find((s) => s.end > pos);
+  const codeSiblings = siblings.filter((s) => s.type !== 'comment');
+  const next = codeSiblings.find((s) => s.start > pos);
 
   let targetOffset: number | null = null;
   if (next) {
-    targetOffset = next.end;
+    targetOffset = next.start;
   } else if (enclosing) {
     targetOffset = enclosing.end;
   }
 
-  if (targetOffset !== null) {
+  if (targetOffset !== null && targetOffset > pos) {
     const targetPos = model.getPositionAt(targetOffset);
     editor.setPosition(targetPos);
     editor.revealPosition(targetPos);
@@ -969,7 +989,7 @@ export function forwardSexp(editor: monaco.editor.IStandaloneCodeEditor): { succ
 }
 
 /**
- * 11. Alt + 2 : 大步后退 (Backward sexp)
+ * 11. Alt + 1 : 大步后退 (Backward sexp)
  */
 export function backwardSexp(editor: monaco.editor.IStandaloneCodeEditor): { success: boolean; detail?: string } {
   const model = editor.getModel();
@@ -981,8 +1001,19 @@ export function backwardSexp(editor: monaco.editor.IStandaloneCodeEditor): { suc
   // 1. Try paredit.js backwardSexp
   try {
     const ast = paredit.parse(text);
-    const target = paredit.navigator.backwardSexp(ast, pos);
+    let target = paredit.navigator.backwardSexp(ast, pos);
     if (target !== null && target !== undefined && target < pos) {
+      while (target !== null && target !== undefined) {
+        if (text[target] === ';') {
+          const prev = paredit.navigator.backwardSexp(ast, target);
+          if (prev !== null && prev !== undefined && prev < target) {
+            target = prev;
+            continue;
+          }
+        }
+        break;
+      }
+
       const p = model.getPositionAt(target);
       editor.setPosition(p);
       editor.revealPosition(p);
@@ -994,21 +1025,18 @@ export function backwardSexp(editor: monaco.editor.IStandaloneCodeEditor): { suc
   const roots = parseSexpressions(text);
   const { enclosing } = findEnclosingWithParent(roots, pos);
   const siblings = enclosing ? enclosing.children || [] : roots;
-  const candidates = siblings.filter((s) => s.start < pos);
+  const codeSiblings = siblings.filter((s) => s.type !== 'comment');
+  const candidates = codeSiblings.filter((s) => s.start < pos);
 
   let targetOffset: number | null = null;
   if (candidates.length > 0) {
     const prev = candidates[candidates.length - 1];
-    if (pos > prev.start) {
-      targetOffset = prev.start;
-    } else if (enclosing) {
-      targetOffset = enclosing.start;
-    }
+    targetOffset = prev.start;
   } else if (enclosing) {
     targetOffset = enclosing.start;
   }
 
-  if (targetOffset !== null) {
+  if (targetOffset !== null && targetOffset < pos) {
     const targetPos = model.getPositionAt(targetOffset);
     editor.setPosition(targetPos);
     editor.revealPosition(targetPos);
