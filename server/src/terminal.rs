@@ -292,6 +292,18 @@ esac
             let _ = std::fs::copy(&script_path, usr_local_bin);
             let _ = std::fs::set_permissions(usr_local_bin, std::fs::Permissions::from_mode(0o755));
         }
+
+        // Also ensure `scheme-ide` binary is directly accessible in helper_dir and /usr/local/bin
+        if !scheme_ide_candidate.is_empty() {
+            let ide_link = helper_dir.join("scheme-ide");
+            if !ide_link.exists() {
+                let _ = std::os::unix::fs::symlink(Path::new(&scheme_ide_candidate), &ide_link);
+            }
+            let usr_ide = Path::new("/usr/local/bin/scheme-ide");
+            if !usr_ide.exists() {
+                let _ = std::os::unix::fs::symlink(Path::new(&scheme_ide_candidate), usr_ide);
+            }
+        }
     }
 
     #[cfg(windows)]
@@ -321,6 +333,21 @@ exit /b 1
         );
         let _ = std::fs::write(&bat_path, &bat_content);
         let _ = std::fs::write(&cmd_path, &bat_content);
+
+        let ide_bat = helper_dir.join("scheme-ide.bat");
+        let ide_cmd = helper_dir.join("scheme-ide.cmd");
+        let ide_bat_content = format!(
+            r#"@echo off
+setlocal
+if exist "{}" (
+    "{}" %*
+    exit /b %ERRORLEVEL%
+)
+"#,
+            scheme_ide_candidate, scheme_ide_candidate
+        );
+        let _ = std::fs::write(&ide_bat, &ide_bat_content);
+        let _ = std::fs::write(&ide_cmd, &ide_bat_content);
     }
 
     Ok(helper_dir)
