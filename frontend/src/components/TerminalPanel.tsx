@@ -1,4 +1,4 @@
-import React, { useState, useRef, useImperativeHandle, forwardRef, useCallback } from 'react';
+import React, { useState, useRef, useImperativeHandle, forwardRef, useCallback, useEffect } from 'react';
 import { TerminalTab, TerminalTabHandle } from './TerminalTab';
 import { TerminalTabItem, GuiActionPayload } from '../types';
 import { Plus, X, Terminal as TerminalIcon } from 'lucide-react';
@@ -22,9 +22,10 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
   ({ onGuiAction, onFocus }, ref) => {
     const [tabs, setTabs] = useState<TerminalTabItem[]>([
       { id: 'repl', title: 'λ REPL', cmd: 'steel', closable: false },
+      { id: 'bash-1', title: 'bash 1', cmd: 'bash', closable: true },
     ]);
-    const [activeTabId, setActiveTabId] = useState<string>('repl');
-    const [bashCounter, setBashCounter] = useState<number>(1);
+    const [activeTabId, setActiveTabId] = useState<string>('bash-1');
+    const [bashCounter, setBashCounter] = useState<number>(2);
 
     const tabRefs = useRef<Map<string, TerminalTabHandle>>(new Map());
 
@@ -43,6 +44,9 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
 
       setTabs((prev) => [...prev, newTab]);
       setActiveTabId(newId);
+      setTimeout(() => {
+        tabRefs.current.get(newId)?.focus();
+      }, 50);
     }, [bashCounter]);
 
     // Close a bash tab (Tab 1 cannot be closed)
@@ -55,7 +59,11 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
 
           if (activeTabId === idToClose) {
             const nextActiveIndex = Math.max(0, tabIndex - 1);
-            setActiveTabId(nextTabs[nextActiveIndex]?.id || 'repl');
+            const nextActiveId = nextTabs[nextActiveIndex]?.id || 'repl';
+            setActiveTabId(nextActiveId);
+            setTimeout(() => {
+              tabRefs.current.get(nextActiveId)?.focus();
+            }, 30);
           }
 
           return nextTabs;
@@ -65,6 +73,14 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
       },
       [activeTabId]
     );
+
+    // Focus active terminal on mount
+    useEffect(() => {
+      const timer = setTimeout(() => {
+        tabRefs.current.get(activeTabId)?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }, []);
 
     // Send code to Tab 1 ("λ REPL")
     const handleSendToRepl = useCallback((code: string) => {
@@ -156,7 +172,12 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
               return (
                 <div
                   key={tab.id}
-                  onClick={() => setActiveTabId(tab.id)}
+                  onClick={() => {
+                    setActiveTabId(tab.id);
+                    setTimeout(() => {
+                      tabRefs.current.get(tab.id)?.focus();
+                    }, 20);
+                  }}
                   className={`group flex items-center space-x-1.5 px-3 py-1.5 text-xs font-mono font-medium rounded-t cursor-pointer transition-colors border-b-2 ${
                     isActive
                       ? 'bg-[#1a1b26] text-[#c0caf5] border-[#7aa2f7]'

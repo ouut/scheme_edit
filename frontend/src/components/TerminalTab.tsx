@@ -79,11 +79,12 @@ export const TerminalTab = forwardRef<TerminalTabHandle, TerminalTabProps>(
       },
     }));
 
-    // Re-fit when tab becomes active
+    // Re-fit and focus when tab becomes active
     useEffect(() => {
       if (isActive) {
         const timer = setTimeout(() => {
           doFit();
+          termRef.current?.focus();
         }, 50);
         return () => clearTimeout(timer);
       }
@@ -190,6 +191,9 @@ export const TerminalTab = forwardRef<TerminalTabHandle, TerminalTabProps>(
             return;
           }
           doFit();
+          if (isActiveRef.current) {
+            term.focus();
+          }
           if (term.cols && term.rows) {
             sendResize(term.cols, term.rows);
           }

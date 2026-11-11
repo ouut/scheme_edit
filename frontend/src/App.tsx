@@ -10,7 +10,7 @@ export const App: React.FC = () => {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [parinferMode] = useState<ParinferMode>('paren');
   const [scratchCounter, setScratchCounter] = useState<number>(1);
-  const [activePane, setActivePane] = useState<'editor' | 'terminal'>('editor');
+  const [activePane, setActivePane] = useState<'editor' | 'terminal'>('terminal');
 
   const containerRef = useRef<HTMLDivElement>(null);
   const editorPanelRef = useRef<EditorPanelHandle>(null);
@@ -284,6 +284,11 @@ export const App: React.FC = () => {
     const initialFile = params.get('open') || params.get('file');
     if (initialFile) {
       openFile(initialFile);
+    } else {
+      const timer = setTimeout(() => {
+        terminalPanelRef.current?.focusActiveTerminal();
+      }, 100);
+      return () => clearTimeout(timer);
     }
   }, [openFile]);
 

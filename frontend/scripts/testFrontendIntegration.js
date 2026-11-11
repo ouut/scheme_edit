@@ -108,6 +108,8 @@ function assert(condition, message) {
   ];
   assert(tabs[0].closable === false && tabs[0].cmd === 'steel', '6a. Tab 1 is λ REPL running Steel, pinned and unclosable');
   assert(tabs[1].closable === true && tabs[1].cmd === 'bash', '6b. Tab 2+ is bash PTY, closable');
+  const defaultActiveTabId = 'bash-1';
+  assert(tabs.length === 2 && defaultActiveTabId === 'bash-1', '6c. Initial state opens both λ REPL and bash 1, with bash 1 active');
 }
 
 // 7. Monaco S-expression extraction for REPL
