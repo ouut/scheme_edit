@@ -24,6 +24,8 @@ export interface EditorPanelHandle {
   focus: () => void;
   layout: () => void;
   triggerShortcut: (id: ShortcutId) => Promise<void>;
+  getPosition?: () => { lineNumber: number; column: number } | null;
+  setPosition?: (pos: { lineNumber: number; column: number }) => void;
 }
 
 export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
@@ -58,6 +60,12 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
       },
       triggerShortcut: async (id: ShortcutId) => {
         await monacoRef.current?.triggerShortcut(id);
+      },
+      getPosition: () => {
+        return monacoRef.current?.getPosition?.() || null;
+      },
+      setPosition: (pos: { lineNumber: number; column: number }) => {
+        monacoRef.current?.setPosition?.(pos);
       },
     }));
 

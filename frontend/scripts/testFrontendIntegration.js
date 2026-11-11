@@ -328,6 +328,55 @@ function assert(condition, message) {
   assert(getInitialStrictParedit('false') === false, '14d. Strict Paredit persists false when toggled off');
 }
 
+// 15. Session State Persistence & Restoration
+{
+  function serializeSession(state) {
+    return JSON.stringify(state);
+  }
+
+  function parseSession(raw) {
+    try {
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return typeof parsed === 'object' && parsed !== null ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // 15a. Session serialization and deserialization
+  const state = {
+    splitRatio: 0.65,
+    activePane: 'editor',
+    openFilePaths: ['fib.scm', 'scratch-1.scm'],
+    activeFilePath: 'scratch-1.scm',
+    scratchDrafts: { 'scratch-1.scm': '(define x 42)' },
+    cursorPositions: { 'scratch-1.scm': { lineNumber: 1, column: 14 } },
+  };
+  const json = serializeSession(state);
+  const restored = parseSession(json);
+  assert(restored && restored.splitRatio === 0.65, '15a. Session restores splitRatio');
+  assert(restored && restored.activePane === 'editor', '15b. Session restores activePane');
+  assert(restored && restored.openFilePaths.length === 2, '15c. Session restores openFilePaths list');
+  assert(restored && restored.activeFilePath === 'scratch-1.scm', '15d. Session restores activeFilePath');
+  assert(restored && restored.scratchDrafts['scratch-1.scm'] === '(define x 42)', '15e. Session restores scratch drafts');
+  assert(restored && restored.cursorPositions['scratch-1.scm'].lineNumber === 1, '15f. Session restores cursor line');
+
+  // 15g. Corrupted or empty storage handles safely
+  assert(parseSession(null) === null, '15g. Empty storage returns null');
+  assert(parseSession('{ invalid json') === null, '15h. Corrupted storage returns null without throwing');
+
+  // 15i. SplitRatio clamp validation
+  function getClampedRatio(saved) {
+    if (saved && typeof saved.splitRatio === 'number' && saved.splitRatio >= 0.1 && saved.splitRatio <= 0.9) {
+      return saved.splitRatio;
+    }
+    return 0.6;
+  }
+  assert(getClampedRatio({ splitRatio: 0.75 }) === 0.75, '15i. Valid splitRatio is respected');
+  assert(getClampedRatio({ splitRatio: 0.01 }) === 0.6, '15j. Out-of-bounds splitRatio falls back to default 0.6');
+}
+
 console.log('================================================================');
 console.log(`Results: ${passed} passed, ${failed} failed`);
 console.log('================================================================');

@@ -55,6 +55,8 @@ export interface MonacoEditorHandle {
   triggerShortcut: (id: ShortcutId) => Promise<void>;
   getEditor: () => monaco.editor.IStandaloneCodeEditor | null;
   layout: () => void;
+  getPosition?: () => { lineNumber: number; column: number } | null;
+  setPosition?: (pos: { lineNumber: number; column: number }) => void;
 }
 
 interface MonacoEditorProps {
@@ -188,6 +190,15 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
       getEditor: () => editorRef.current,
       layout: () => {
         editorRef.current?.layout();
+      },
+      getPosition: () => {
+        const pos = editorRef.current?.getPosition();
+        return pos ? { lineNumber: pos.lineNumber, column: pos.column } : null;
+      },
+      setPosition: (pos: { lineNumber: number; column: number }) => {
+        if (!editorRef.current) return;
+        editorRef.current.setPosition(pos);
+        editorRef.current.revealPositionInCenter(pos);
       },
     }));
 

@@ -78,3 +78,13 @@ export interface GuiActionPayload {
   left?: number;
   right?: number;
 }
+
+export interface SavedSessionState {
+  splitRatio: number;
+  activePane: 'editor' | 'terminal';
+  openFilePaths: string[];
+  activeFilePath: string | null;
+  scratchDrafts?: Record<string, string>;
+  cursorPositions?: Record<string, { lineNumber: number; column: number }>;
+}
+

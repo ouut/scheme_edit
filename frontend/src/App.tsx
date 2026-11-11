@@ -1,12 +1,39 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { EditorPanel, EditorPanelHandle } from './components/EditorPanel';
 import { TerminalPanel, TerminalPanelHandle } from './components/TerminalPanel';
-import { OpenFile, ParinferMode, ShortcutId, GuiActionPayload } from './types';
+import { OpenFile, ParinferMode, ShortcutId, GuiActionPayload, SavedSessionState } from './types';
+
+const SESSION_STORAGE_KEY = 'scheme_ide_session_state';
+
+const getSavedSession = (): SavedSessionState | null => {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null) {
+      return parsed as SavedSessionState;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
 
 export const App: React.FC = () => {
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
-  const [splitRatio, setSplitRatio] = useState<number>(0.6); // Default 60:40
+  const [splitRatio, setSplitRatio] = useState<number>(() => {
+    const saved = getSavedSession();
+    if (
+      saved &&
+      typeof saved.splitRatio === 'number' &&
+      saved.splitRatio >= 0.1 &&
+      saved.splitRatio <= 0.9
+    ) {
+      return saved.splitRatio;
+    }
+    return 0.6; // Default 60:40
+  });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [parinferMode] = useState<ParinferMode>('paren');
   const [strictParedit, setStrictParedit] = useState<boolean>(() => {
@@ -18,7 +45,13 @@ export const App: React.FC = () => {
     }
   });
   const [scratchCounter, setScratchCounter] = useState<number>(1);
-  const [activePane, setActivePane] = useState<'editor' | 'terminal'>('terminal');
+  const [activePane, setActivePane] = useState<'editor' | 'terminal'>(() => {
+    const saved = getSavedSession();
+    if (saved && (saved.activePane === 'editor' || saved.activePane === 'terminal')) {
+      return saved.activePane;
+    }
+    return 'terminal';
+  });
 
   const handleToggleStrictParedit = useCallback(() => {
     setStrictParedit((prev) => {
@@ -37,6 +70,8 @@ export const App: React.FC = () => {
   const processedActionIdsRef = useRef<Set<string | number>>(new Set());
   const lastGuiActionRef = useRef<{ key: string; time: number }>({ key: '', time: 0 });
   const openingPathsRef = useRef<Set<string>>(new Set());
+  const isSessionRestoredRef = useRef<boolean>(false);
+  const savedCursorPositionsRef = useRef<Record<string, { lineNumber: number; column: number }>>({});
 
   const openFilesRef = useRef<OpenFile[]>(openFiles);
   openFilesRef.current = openFiles;
@@ -290,19 +325,195 @@ export const App: React.FC = () => {
     [openFile, closeFile, activeFilePath]
   );
 
-  // Check URL params on initial mount (?open=... or ?file=...)
+  // Restore saved session (files, layout, active tab, cursor) on initial mount
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const initialFile = params.get('open') || params.get('file');
-    if (initialFile) {
-      openFile(initialFile);
-    } else {
-      const timer = setTimeout(() => {
-        terminalPanelRef.current?.focusActiveTerminal();
-      }, 100);
-      return () => clearTimeout(timer);
-    }
+    let isCancelled = false;
+
+    const restoreSession = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const urlFile = params.get('open') || params.get('file');
+
+      // If URL has a specific file param, prioritize it
+      if (urlFile) {
+        await openFile(urlFile);
+        setActivePane('editor');
+        setTimeout(() => editorPanelRef.current?.focus(), 80);
+        isSessionRestoredRef.current = true;
+        return;
+      }
+
+      const saved = getSavedSession();
+      if (!saved || !Array.isArray(saved.openFilePaths) || saved.openFilePaths.length === 0) {
+        // Cold start without saved files: focus active terminal
+        setTimeout(() => {
+          terminalPanelRef.current?.focusActiveTerminal();
+        }, 100);
+        isSessionRestoredRef.current = true;
+        return;
+      }
+
+      if (saved.cursorPositions) {
+        savedCursorPositionsRef.current = { ...saved.cursorPositions };
+      }
+
+      const scratchDrafts = saved.scratchDrafts || {};
+      const restoredFiles: OpenFile[] = [];
+
+      for (const filePath of saved.openFilePaths) {
+        const cleanPath = filePath.trim();
+        if (!cleanPath) continue;
+
+        if (cleanPath.startsWith('scratch-') && cleanPath.endsWith('.scm')) {
+          const draft = scratchDrafts[cleanPath] || ';; Scheme Scratch Buffer\n';
+          restoredFiles.push({
+            path: cleanPath,
+            name: cleanPath.split('/').pop() || cleanPath,
+            content: draft,
+            savedContent: draft,
+            isModified: false,
+          });
+        } else {
+          try {
+            const res = await fetch(`/api/file?path=${encodeURIComponent(cleanPath)}`);
+            if (res.ok) {
+              const contentType = res.headers.get('content-type') || '';
+              let content = '';
+              if (contentType.includes('application/json')) {
+                const data = await res.json();
+                content = data.content ?? data.text ?? '';
+              } else {
+                content = await res.text();
+              }
+              restoredFiles.push({
+                path: cleanPath,
+                name: cleanPath.split('/').pop() || cleanPath,
+                content: content,
+                savedContent: content,
+                isModified: false,
+              });
+            } else {
+              console.info(`[SessionRestore] File ${cleanPath} not found on server, skipping.`);
+            }
+          } catch (err) {
+            console.warn(`[SessionRestore] Failed to fetch ${cleanPath}:`, err);
+          }
+        }
+      }
+
+      if (isCancelled) return;
+
+      if (restoredFiles.length > 0) {
+        setOpenFiles(restoredFiles);
+
+        let activeToSet = restoredFiles[0].path;
+        if (saved.activeFilePath && restoredFiles.some((f) => f.path === saved.activeFilePath)) {
+          activeToSet = saved.activeFilePath;
+        }
+        setActiveFilePath(activeToSet);
+
+        // Restore cursor position for active file
+        const savedPos = savedCursorPositionsRef.current[activeToSet];
+        if (savedPos) {
+          setTimeout(() => {
+            editorPanelRef.current?.setPosition?.(savedPos);
+          }, 120);
+        }
+
+        // Focus appropriate pane
+        if (saved.activePane === 'editor') {
+          setTimeout(() => {
+            editorPanelRef.current?.focus();
+          }, 80);
+        } else {
+          setTimeout(() => {
+            terminalPanelRef.current?.focusActiveTerminal();
+          }, 80);
+        }
+      } else {
+        setTimeout(() => {
+          terminalPanelRef.current?.focusActiveTerminal();
+        }, 100);
+      }
+
+      isSessionRestoredRef.current = true;
+    };
+
+    restoreSession();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [openFile]);
+
+  // Persist session state to localStorage (debounced)
+  useEffect(() => {
+    if (!isSessionRestoredRef.current) return;
+
+    // Track active file cursor position if available
+    const currentPos = editorPanelRef.current?.getPosition?.();
+    if (activeFilePath && currentPos) {
+      savedCursorPositionsRef.current[activeFilePath] = currentPos;
+    }
+
+    const scratchDrafts: Record<string, string> = {};
+    for (const f of openFiles) {
+      if (f.path.startsWith('scratch-') && f.path.endsWith('.scm')) {
+        scratchDrafts[f.path] = f.content;
+      }
+    }
+
+    const stateToSave: SavedSessionState = {
+      splitRatio,
+      activePane,
+      openFilePaths: openFiles.map((f) => f.path),
+      activeFilePath,
+      scratchDrafts,
+      cursorPositions: { ...savedCursorPositionsRef.current },
+    };
+
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(stateToSave));
+      } catch (err) {
+        console.warn('Failed to save session state:', err);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [openFiles, activeFilePath, splitRatio, activePane]);
+
+  // Flush state immediately on page unload / refresh
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const scratchDrafts: Record<string, string> = {};
+      for (const f of openFilesRef.current) {
+        if (f.path.startsWith('scratch-') && f.path.endsWith('.scm')) {
+          scratchDrafts[f.path] = f.content;
+        }
+      }
+
+      const currentPos = editorPanelRef.current?.getPosition?.();
+      if (activeFilePath && currentPos) {
+        savedCursorPositionsRef.current[activeFilePath] = currentPos;
+      }
+
+      const stateToSave: SavedSessionState = {
+        splitRatio,
+        activePane,
+        openFilePaths: openFilesRef.current.map((f) => f.path),
+        activeFilePath,
+        scratchDrafts,
+        cursorPositions: { ...savedCursorPositionsRef.current },
+      };
+
+      try {
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(stateToSave));
+      } catch {}
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [splitRatio, activePane, activeFilePath]);
 
   // Draggable divider mouse handler
   const startDragging = useCallback(
