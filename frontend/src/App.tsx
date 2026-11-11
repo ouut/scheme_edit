@@ -38,6 +38,9 @@ export const App: React.FC = () => {
   const lastGuiActionRef = useRef<{ key: string; time: number }>({ key: '', time: 0 });
   const openingPathsRef = useRef<Set<string>>(new Set());
 
+  const openFilesRef = useRef<OpenFile[]>(openFiles);
+  openFilesRef.current = openFiles;
+
   const isEditorOpen = openFiles.length > 0;
 
   // Auto-save file content to /api/file
@@ -109,24 +112,18 @@ export const App: React.FC = () => {
       const cleanPath = filePath.trim();
       if (!cleanPath) return;
 
-      // If already open or being opened, switch active tab and ensure left panel is open
-      if (openingPathsRef.current.has(cleanPath)) {
+      // If already open, switch active tab and ensure left panel is open
+      if (openFilesRef.current.some((f) => f.path === cleanPath)) {
         setActiveFilePath(cleanPath);
         setSplitRatio((r) => (r <= 0.05 ? 0.6 : r));
+        setActivePane('editor');
+        setTimeout(() => {
+          editorPanelRef.current?.focus();
+        }, 60);
         return;
       }
 
-      let alreadyExists = false;
-      setOpenFiles((prev) => {
-        if (prev.some((f) => f.path === cleanPath)) {
-          alreadyExists = true;
-        }
-        return prev;
-      });
-
-      if (alreadyExists) {
-        setActiveFilePath(cleanPath);
-        setSplitRatio((r) => (r <= 0.05 ? 0.6 : r));
+      if (openingPathsRef.current.has(cleanPath)) {
         return;
       }
 
@@ -220,15 +217,12 @@ export const App: React.FC = () => {
 
   // Create new scratch buffer (scratch-N.scm)
   const handleNewScratchFile = useCallback(() => {
-    setOpenFiles((prev) => {
-      let counter = 1;
-      while (prev.some((f) => f.path === `scratch-${counter}.scm`)) {
-        counter++;
-      }
-      const filename = `scratch-${counter}.scm`;
-      openFile(filename, ';; Scheme Scratch Buffer\n');
-      return prev;
-    });
+    let counter = 1;
+    while (openFilesRef.current.some((f) => f.path === `scratch-${counter}.scm`)) {
+      counter++;
+    }
+    const filename = `scratch-${counter}.scm`;
+    openFile(filename, ';; Scheme Scratch Buffer\n');
   }, [openFile]);
 
   // Alt+Enter / Ctrl+Enter: Send selected or current S-expression to Tab 1 ("λ REPL")
@@ -355,35 +349,31 @@ export const App: React.FC = () => {
 
   // Cycle backwards through open file tabs with wrap-around
   const switchPrevEditorTab = useCallback(() => {
-    setOpenFiles((currentOpenFiles) => {
-      if (currentOpenFiles.length <= 1) return currentOpenFiles;
-      setActiveFilePath((currentActive) => {
-        const idx = currentOpenFiles.findIndex((f) => f.path === currentActive);
-        const prevIdx = (idx - 1 + currentOpenFiles.length) % currentOpenFiles.length;
-        const nextPath = currentOpenFiles[prevIdx].path;
-        setTimeout(() => {
-          editorPanelRef.current?.focus();
-        }, 30);
-        return nextPath;
-      });
-      return currentOpenFiles;
+    const files = openFilesRef.current;
+    if (files.length <= 1) return;
+    setActiveFilePath((currentActive) => {
+      const idx = files.findIndex((f) => f.path === currentActive);
+      const prevIdx = (idx - 1 + files.length) % files.length;
+      const nextPath = files[prevIdx].path;
+      setTimeout(() => {
+        editorPanelRef.current?.focus();
+      }, 30);
+      return nextPath;
     });
   }, []);
 
   // Cycle forwards through open file tabs with wrap-around
   const switchNextEditorTab = useCallback(() => {
-    setOpenFiles((currentOpenFiles) => {
-      if (currentOpenFiles.length <= 1) return currentOpenFiles;
-      setActiveFilePath((currentActive) => {
-        const idx = currentOpenFiles.findIndex((f) => f.path === currentActive);
-        const nextIdx = (idx + 1) % currentOpenFiles.length;
-        const nextPath = currentOpenFiles[nextIdx].path;
-        setTimeout(() => {
-          editorPanelRef.current?.focus();
-        }, 30);
-        return nextPath;
-      });
-      return currentOpenFiles;
+    const files = openFilesRef.current;
+    if (files.length <= 1) return;
+    setActiveFilePath((currentActive) => {
+      const idx = files.findIndex((f) => f.path === currentActive);
+      const nextIdx = (idx + 1) % files.length;
+      const nextPath = files[nextIdx].path;
+      setTimeout(() => {
+        editorPanelRef.current?.focus();
+      }, 30);
+      return nextPath;
     });
   }, []);
 

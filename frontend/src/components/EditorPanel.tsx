@@ -145,7 +145,11 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
 
             {onNewFile && (
               <button
-                onClick={onNewFile}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onNewFile();
+                }}
                 className="flex items-center justify-center w-6 h-6 rounded text-[#565f89] hover:text-[#7aa2f7] hover:bg-[#24283b] transition-colors cursor-pointer"
                 title="New scratch buffer"
                 aria-label="New scratch buffer"
