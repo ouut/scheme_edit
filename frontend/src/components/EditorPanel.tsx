@@ -1,8 +1,9 @@
-import React, { useRef, useImperativeHandle, forwardRef } from 'react';
+import React, { useState, useRef, useImperativeHandle, forwardRef } from 'react';
 import { MonacoEditor, MonacoEditorHandle } from './MonacoEditor';
 import { OpenFile, ParinferMode, ShortcutId } from '../types';
-import { X, FileCode, FileText, Plus } from 'lucide-react';
+import { X, FileCode, FileText, Plus, HelpCircle } from 'lucide-react';
 import { isSchemeFile } from '../lib/monacoScheme';
+import { ShortcutsHelpModal } from './ShortcutsHelpModal';
 
 export interface EditorPanelProps {
   openFiles: OpenFile[];
@@ -10,6 +11,7 @@ export interface EditorPanelProps {
   onSelectTab: (path: string) => void;
   onCloseTab: (path: string) => void;
   onNewFile?: () => void;
+  onOpenHelp?: () => void;
   onCodeChange: (path: string, content: string) => void;
   onSendToRepl: (code: string) => void;
   onSaveActiveFile?: () => void;
@@ -22,6 +24,7 @@ export interface EditorPanelHandle {
   focus: () => void;
   layout: () => void;
   triggerShortcut: (id: ShortcutId) => Promise<void>;
+  openHelpModal?: () => void;
 }
 
 export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
@@ -32,6 +35,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
       onSelectTab,
       onCloseTab,
       onNewFile,
+      onOpenHelp,
       onCodeChange,
       onSendToRepl,
       onSaveActiveFile,
@@ -42,6 +46,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
     ref
   ) => {
     const monacoRef = useRef<MonacoEditorHandle>(null);
+    const [isHelpOpen, setIsHelpOpen] = useState(false);
 
     const activeFile = openFiles.find((f) => f.path === activeFilePath) || openFiles[0];
 
@@ -54,6 +59,9 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
       },
       triggerShortcut: async (id: ShortcutId) => {
         await monacoRef.current?.triggerShortcut(id);
+      },
+      openHelpModal: () => {
+        setIsHelpOpen(true);
       },
     }));
 
@@ -111,18 +119,34 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
             })}
           </div>
 
-          {/* New Scratch File Button */}
-          {onNewFile && (
-            <div className="flex items-center ml-2">
+          {/* Tab Bar Action Buttons: Help (?) and New Scratch File (+) */}
+          <div className="flex items-center space-x-1 ml-2">
+            <button
+              onClick={() => {
+                if (onOpenHelp) {
+                  onOpenHelp();
+                } else {
+                  setIsHelpOpen(true);
+                }
+              }}
+              className="flex items-center justify-center w-6 h-6 rounded text-[#565f89] hover:text-[#7aa2f7] hover:bg-[#24283b] transition-colors cursor-pointer"
+              title="快捷键指南 (Shortcuts Manual)"
+              aria-label="快捷键指南 (Shortcuts Manual)"
+            >
+              <HelpCircle className="w-3.5 h-3.5" />
+            </button>
+
+            {onNewFile && (
               <button
                 onClick={onNewFile}
-                className="flex items-center justify-center w-6 h-6 rounded text-[#565f89] hover:text-[#7aa2f7] hover:bg-[#24283b] transition-colors"
+                className="flex items-center justify-center w-6 h-6 rounded text-[#565f89] hover:text-[#7aa2f7] hover:bg-[#24283b] transition-colors cursor-pointer"
                 title="New scratch buffer"
+                aria-label="New scratch buffer"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {/* Monaco Editor Container */}
@@ -140,6 +164,12 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
             onShortcutTriggered={onShortcutTriggered}
           />
         </div>
+
+        {/* Shortcuts Help Modal Dialog */}
+        <ShortcutsHelpModal
+          isOpen={isHelpOpen}
+          onClose={() => setIsHelpOpen(false)}
+        />
       </div>
     );
   }

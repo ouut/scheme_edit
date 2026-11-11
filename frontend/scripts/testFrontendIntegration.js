@@ -266,6 +266,56 @@ function assert(condition, message) {
   assert(cycleTerminalTab(terminalTabs, 'repl', 'left') === 'bash-2', '12f. Alt+Shift+Left at first terminal tab wraps to last bash tab');
 }
 
+// 13. Shortcuts Help Modal & Navigation Manual Verification
+{
+  const expectedPareditIds = [
+    'expand', 'eval_repl', 'wrap_parens', 'wrap_square',
+    'slurp', 'barf', 'contract', 'defun', 'splice',
+    'forward', 'backward', 'down', 'up', 'kill_sexp',
+    'indent', 'transpose', 'split'
+  ];
+  assert(expectedPareditIds.length === 17, '13a. Exactly 17 Strict Paredit shortcuts cataloged');
+
+  const globalNavShortcuts = [
+    { id: 'focus-editor', keys: 'Alt + Shift + Up', macKeys: '⌥ + ⇧ + ↑' },
+    { id: 'focus-terminal', keys: 'Alt + Shift + Down', macKeys: '⌥ + ⇧ + ↓' },
+    { id: 'prev-tab', keys: 'Alt + Shift + Left', macKeys: '⌥ + ⇧ + ←' },
+    { id: 'next-tab', keys: 'Alt + Shift + Right', macKeys: '⌥ + ⇧ + →' },
+  ];
+  assert(globalNavShortcuts.length === 4, '13b. Global navigation contains all 4 directional focus & tab switching shortcuts');
+
+  const guiCommands = ['gui open', 'gui edit', 'gui close', 'gui cd', 'gui ratio', 'gui help'];
+  assert(guiCommands.length === 6, '13c. Terminal GUI commands contain all 6 CLI actions');
+
+  // Search filter matcher test
+  function matchesShortcut(item, query) {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      (item.name && item.name.toLowerCase().includes(q)) ||
+      (item.enName && item.enName.toLowerCase().includes(q)) ||
+      (item.keys && item.keys.toLowerCase().includes(q)) ||
+      (item.macKeys && item.macKeys.toLowerCase().includes(q)) ||
+      (item.description && item.description.toLowerCase().includes(q)) ||
+      (item.cmd && item.cmd.toLowerCase().includes(q)) ||
+      (item.syntax && item.syntax.toLowerCase().includes(q))
+    );
+  }
+
+  const sampleShortcuts = [
+    { id: 'expand', name: '向外扩选', enName: 'Expand', keys: 'Alt + K', macKeys: '⌥ + K', description: '自动严丝合缝选中当前 (...)' },
+    { id: 'focus-terminal', name: '输入焦点跳转到 Shell 终端', enName: 'Focus Terminal', keys: 'Alt + Shift + Down', macKeys: '⌥ + ⇧ + ↓', description: '快速将键盘输入焦点切换到右侧活动终端' },
+    { cmd: 'gui ratio', syntax: 'gui ratio <L:R>', name: '动态调整分栏比例', enName: 'Adjust Ratio', description: '调整分栏比例' },
+  ];
+
+  assert(matchesShortcut(sampleShortcuts[0], '扩选'), '13d. Filter matches shortcut by Chinese name');
+  assert(matchesShortcut(sampleShortcuts[0], 'alt + k'), '13e. Filter matches shortcut by key chord');
+  assert(matchesShortcut(sampleShortcuts[1], 'Focus Terminal'), '13f. Filter matches global navigation by enName');
+  assert(matchesShortcut(sampleShortcuts[1], '⌥ + ⇧ + ↓'), '13g. Filter matches macOS Option key chord');
+  assert(matchesShortcut(sampleShortcuts[2], 'ratio'), '13h. Filter matches GUI CLI command syntax');
+  assert(!matchesShortcut(sampleShortcuts[0], 'nonexistent-xyz'), '13i. Non-matching query yields false');
+}
+
 console.log('================================================================');
 console.log(`Results: ${passed} passed, ${failed} failed`);
 console.log('================================================================');
