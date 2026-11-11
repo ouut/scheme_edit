@@ -9,8 +9,26 @@ export const App: React.FC = () => {
   const [splitRatio, setSplitRatio] = useState<number>(0.6); // Default 60:40
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [parinferMode] = useState<ParinferMode>('paren');
+  const [strictParedit, setStrictParedit] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('scheme_strict_paredit');
+      return saved !== 'false'; // default true (开启类似 Emacs Strict Paredit 严格守卫)
+    } catch {
+      return true;
+    }
+  });
   const [scratchCounter, setScratchCounter] = useState<number>(1);
   const [activePane, setActivePane] = useState<'editor' | 'terminal'>('terminal');
+
+  const handleToggleStrictParedit = useCallback(() => {
+    setStrictParedit((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('scheme_strict_paredit', String(next));
+      } catch {}
+      return next;
+    });
+  }, []);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const editorPanelRef = useRef<EditorPanelHandle>(null);
@@ -467,6 +485,8 @@ export const App: React.FC = () => {
             onSendToRepl={handleSendToRepl}
             onSaveActiveFile={handleSaveActiveFile}
             parinferMode={parinferMode}
+            strictParedit={strictParedit}
+            onToggleStrictParedit={handleToggleStrictParedit}
             onFocus={() => setActivePane('editor')}
           />
         </div>

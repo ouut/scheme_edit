@@ -1,7 +1,8 @@
 import React, { useState, useRef, useImperativeHandle, forwardRef, useCallback, useEffect } from 'react';
 import { TerminalTab, TerminalTabHandle } from './TerminalTab';
 import { TerminalTabItem, GuiActionPayload } from '../types';
-import { Plus, X, Terminal as TerminalIcon } from 'lucide-react';
+import { Plus, X, Terminal as TerminalIcon, HelpCircle } from 'lucide-react';
+import { ShortcutsHelpModal } from './ShortcutsHelpModal';
 
 export interface TerminalPanelProps {
   onGuiAction: (payload: GuiActionPayload) => void;
@@ -26,6 +27,7 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
     ]);
     const [activeTabId, setActiveTabId] = useState<string>('bash-1');
     const [bashCounter, setBashCounter] = useState<number>(2);
+    const [isHelpOpen, setIsHelpOpen] = useState<boolean>(false);
 
     const tabRefs = useRef<Map<string, TerminalTabHandle>>(new Map());
 
@@ -205,12 +207,22 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
             })}
           </div>
 
-          {/* New Tab Button */}
-          <div className="flex items-center ml-2">
+          {/* Terminal Tab Bar Action Buttons: Help (?) and New Terminal (+) */}
+          <div className="flex items-center space-x-1 ml-2">
+            <button
+              onClick={() => setIsHelpOpen(true)}
+              className="flex items-center justify-center w-6 h-6 rounded text-[#565f89] hover:text-[#7aa2f7] hover:bg-[#24283b] transition-colors cursor-pointer"
+              title="快捷键指南 (Shortcuts Manual)"
+              aria-label="快捷键指南 (Shortcuts Manual)"
+            >
+              <HelpCircle className="w-3.5 h-3.5" />
+            </button>
+
             <button
               onClick={handleNewBashTab}
-              className="flex items-center justify-center w-6 h-6 rounded text-[#565f89] hover:text-[#7aa2f7] hover:bg-[#24283b] transition-colors"
+              className="flex items-center justify-center w-6 h-6 rounded text-[#565f89] hover:text-[#7aa2f7] hover:bg-[#24283b] transition-colors cursor-pointer"
               title="New bash terminal"
+              aria-label="New bash terminal"
             >
               <Plus className="w-3.5 h-3.5" />
             </button>
@@ -247,6 +259,12 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
             );
           })}
         </div>
+
+        {/* Shortcuts Help Modal Dialog */}
+        <ShortcutsHelpModal
+          isOpen={isHelpOpen}
+          onClose={() => setIsHelpOpen(false)}
+        />
       </div>
     );
   }

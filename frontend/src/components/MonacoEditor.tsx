@@ -13,6 +13,7 @@ import {
   isParinferLocked,
   withParinferLock,
 } from '../lib/parinferService';
+import { handleStrictKeyDown } from '../lib/strictPareditGuard';
 import {
   dispatchShortcut,
   expandSelection,
@@ -60,6 +61,7 @@ interface MonacoEditorProps {
   initialCode: string;
   filePath?: string;
   parinferMode: ParinferMode;
+  strictParedit?: boolean;
   onCodeChange?: (code: string) => void;
   onShortcutTriggered?: (id: ShortcutId, detail: string, success: boolean) => void;
   onEvalResult?: (data: {
@@ -81,6 +83,7 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
       initialCode,
       filePath,
       parinferMode,
+      strictParedit = true,
       onCodeChange,
       onShortcutTriggered,
       onEvalResult,
@@ -100,6 +103,9 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
 
     const parinferModeRef = useRef<ParinferMode>(parinferMode);
     parinferModeRef.current = parinferMode;
+
+    const strictPareditRef = useRef<boolean>(strictParedit);
+    strictPareditRef.current = strictParedit;
 
     const onCodeChangeRef = useRef(onCodeChange);
     onCodeChangeRef.current = onCodeChange;
@@ -267,6 +273,21 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
       });
 
       editorRef.current = editor;
+
+      // Strict Paredit key guard (intercept Backspace, Delete, Close parens, Auto-pairing)
+      editor.onKeyDown((e: monaco.IKeyboardEvent) => {
+        const currentPath = filePathRef.current;
+        if (!isSchemeFile(currentPath)) return;
+
+        handleStrictKeyDown(
+          e,
+          editor,
+          strictPareditRef.current,
+          (newCode) => {
+            onCodeChangeRef.current?.(newCode);
+          }
+        );
+      });
 
       // Handle Parinfer on content change & auto-strip macOS dead-key character leaks
       editor.onDidChangeModelContent((e) => {

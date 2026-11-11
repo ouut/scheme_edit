@@ -1,9 +1,8 @@
-import React, { useState, useRef, useImperativeHandle, forwardRef } from 'react';
+import React, { useRef, useImperativeHandle, forwardRef } from 'react';
 import { MonacoEditor, MonacoEditorHandle } from './MonacoEditor';
 import { OpenFile, ParinferMode, ShortcutId } from '../types';
-import { X, FileCode, FileText, Plus, HelpCircle } from 'lucide-react';
+import { X, FileCode, FileText, Plus, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { isSchemeFile } from '../lib/monacoScheme';
-import { ShortcutsHelpModal } from './ShortcutsHelpModal';
 
 export interface EditorPanelProps {
   openFiles: OpenFile[];
@@ -11,7 +10,8 @@ export interface EditorPanelProps {
   onSelectTab: (path: string) => void;
   onCloseTab: (path: string) => void;
   onNewFile?: () => void;
-  onOpenHelp?: () => void;
+  strictParedit?: boolean;
+  onToggleStrictParedit?: () => void;
   onCodeChange: (path: string, content: string) => void;
   onSendToRepl: (code: string) => void;
   onSaveActiveFile?: () => void;
@@ -24,7 +24,6 @@ export interface EditorPanelHandle {
   focus: () => void;
   layout: () => void;
   triggerShortcut: (id: ShortcutId) => Promise<void>;
-  openHelpModal?: () => void;
 }
 
 export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
@@ -35,7 +34,8 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
       onSelectTab,
       onCloseTab,
       onNewFile,
-      onOpenHelp,
+      strictParedit = true,
+      onToggleStrictParedit,
       onCodeChange,
       onSendToRepl,
       onSaveActiveFile,
@@ -46,7 +46,6 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
     ref
   ) => {
     const monacoRef = useRef<MonacoEditorHandle>(null);
-    const [isHelpOpen, setIsHelpOpen] = useState(false);
 
     const activeFile = openFiles.find((f) => f.path === activeFilePath) || openFiles[0];
 
@@ -59,9 +58,6 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
       },
       triggerShortcut: async (id: ShortcutId) => {
         await monacoRef.current?.triggerShortcut(id);
-      },
-      openHelpModal: () => {
-        setIsHelpOpen(true);
       },
     }));
 
@@ -119,22 +115,33 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
             })}
           </div>
 
-          {/* Tab Bar Action Buttons: Help (?) and New Scratch File (+) */}
-          <div className="flex items-center space-x-1 ml-2">
-            <button
-              onClick={() => {
-                if (onOpenHelp) {
-                  onOpenHelp();
-                } else {
-                  setIsHelpOpen(true);
+          {/* Tab Bar Action Buttons: Strict Paredit Toggle and New Scratch File (+) */}
+          <div className="flex items-center space-x-1.5 ml-2">
+            {onToggleStrictParedit && (
+              <button
+                onClick={onToggleStrictParedit}
+                className={`flex items-center space-x-1 px-1.5 h-6 rounded text-xs font-mono transition-colors cursor-pointer border ${
+                  strictParedit
+                    ? 'bg-[#9ece6a]/15 text-[#9ece6a] border-[#9ece6a]/30 hover:bg-[#9ece6a]/25'
+                    : 'bg-transparent text-[#565f89] border-[#24283b] hover:text-[#c0caf5] hover:bg-[#24283b]'
+                }`}
+                title={
+                  strictParedit
+                    ? 'Strict Paredit: 已开启 (按键级结构守卫，退格与闭括号自动保护，点击关闭)'
+                    : 'Strict Paredit: 已关闭 (自由文本输入模式，点击开启)'
                 }
-              }}
-              className="flex items-center justify-center w-6 h-6 rounded text-[#565f89] hover:text-[#7aa2f7] hover:bg-[#24283b] transition-colors cursor-pointer"
-              title="快捷键指南 (Shortcuts Manual)"
-              aria-label="快捷键指南 (Shortcuts Manual)"
-            >
-              <HelpCircle className="w-3.5 h-3.5" />
-            </button>
+                aria-label="Toggle Strict Paredit"
+              >
+                {strictParedit ? (
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#9ece6a]" />
+                ) : (
+                  <ShieldAlert className="w-3.5 h-3.5 text-[#565f89]" />
+                )}
+                <span className="text-[10px] font-semibold tracking-wide">
+                  {strictParedit ? 'Strict' : 'Free'}
+                </span>
+              </button>
+            )}
 
             {onNewFile && (
               <button
@@ -156,6 +163,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
             initialCode={activeFile.content}
             filePath={activeFile.path}
             parinferMode={parinferMode}
+            strictParedit={strictParedit}
             onCodeChange={(newCode) => {
               onCodeChange(activeFile.path, newCode);
             }}
@@ -164,12 +172,6 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(
             onShortcutTriggered={onShortcutTriggered}
           />
         </div>
-
-        {/* Shortcuts Help Modal Dialog */}
-        <ShortcutsHelpModal
-          isOpen={isHelpOpen}
-          onClose={() => setIsHelpOpen(false)}
-        />
       </div>
     );
   }

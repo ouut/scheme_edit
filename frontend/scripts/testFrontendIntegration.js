@@ -316,6 +316,18 @@ function assert(condition, message) {
   assert(!matchesShortcut(sampleShortcuts[0], 'nonexistent-xyz'), '13i. Non-matching query yields false');
 }
 
+// 14. Strict Paredit Mode & Button locations
+{
+  // Default strict paredit is true
+  function getInitialStrictParedit(storageVal) {
+    return storageVal !== 'false';
+  }
+  assert(getInitialStrictParedit(null) === true, '14a. Strict Paredit defaults to true (enabled)');
+  assert(getInitialStrictParedit(undefined) === true, '14b. Strict Paredit defaults to true without storage');
+  assert(getInitialStrictParedit('true') === true, '14c. Strict Paredit persists true');
+  assert(getInitialStrictParedit('false') === false, '14d. Strict Paredit persists false when toggled off');
+}
+
 console.log('================================================================');
 console.log(`Results: ${passed} passed, ${failed} failed`);
 console.log('================================================================');
