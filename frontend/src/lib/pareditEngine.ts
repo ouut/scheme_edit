@@ -499,17 +499,112 @@ export async function evalRepl(
 }
 
 /**
- * 3. Alt + Shift + W : 圆括号包裹 (Wrap Parens)
+ * 3. Alt + H : 圆括号包裹 (Wrap Parens)
  */
 export function wrapParens(editor: monaco.editor.IStandaloneCodeEditor): { success: boolean; detail?: string } {
   return wrapWith(editor, '(', ')', 'Wrap Parens');
 }
 
 /**
- * 4. Alt + Shift + U : 方括号包裹 (Wrap Square)
+ * 4. Alt + Shift + H : 方括号包裹 (Wrap Square)
  */
 export function wrapSquare(editor: monaco.editor.IStandaloneCodeEditor): { success: boolean; detail?: string } {
   return wrapWith(editor, '[', ']', 'Wrap Square');
+}
+
+/**
+ * Calva-style smart affinity calculation for wrapping forms:
+ * 1. Touching end of sibling form (left affinity): define| x -> wraps define -> (define|) x
+ * 2. Inside sibling form: def|ine -> (def|ine)
+ * 3. Touching start of sibling form: |define -> (|define)
+ * 4. In whitespace before forward sibling: define | x -> define (|x)
+ * 5. Empty / whitespace with no siblings: | -> (|)
+ */
+export function computeSmartWrap(
+  text: string,
+  pos: number,
+  openChar: string = '(',
+  closeChar: string = ')'
+): {
+  target: SexpNode | null;
+  cursorType: 'end' | 'inside' | 'start' | 'forward' | 'empty';
+  rangeStart: number;
+  rangeEnd: number;
+  replacementText: string;
+  newOffset: number;
+} {
+  const roots = parseSexpressions(text);
+  const { enclosing } = findEnclosingWithParent(roots, pos);
+  const siblings = (enclosing ? (enclosing.children || []) : roots)
+    .filter(n => n.type !== 'comment');
+
+  let target: SexpNode | null = null;
+  let cursorType: 'end' | 'inside' | 'start' | 'forward' | 'empty' = 'start';
+
+  // 1. Touching end of sibling form (left affinity)
+  const touchingEnd = siblings.find(
+    s => s.end === pos && pos > 0 && !/\s/.test(text[pos - 1])
+  );
+  if (touchingEnd) {
+    target = touchingEnd;
+    cursorType = 'end';
+  }
+
+  // 2. Inside a sibling form
+  if (!target) {
+    const inside = siblings.find(s => s.start < pos && pos < s.end);
+    if (inside) {
+      target = inside;
+      cursorType = 'inside';
+    }
+  }
+
+  // 3. Touching start of sibling form
+  if (!target) {
+    const touchingStart = siblings.find(s => s.start === pos);
+    if (touchingStart) {
+      target = touchingStart;
+      cursorType = 'start';
+    }
+  }
+
+  // 4. Forward sibling in whitespace
+  if (!target) {
+    const forward = siblings.find(s => s.start > pos);
+    if (forward) {
+      target = forward;
+      cursorType = 'forward';
+    }
+  }
+
+  if (target) {
+    const targetText = text.slice(target.start, target.end);
+    let newOffset: number;
+    if (cursorType === 'end') {
+      newOffset = target.end + openChar.length;
+    } else if (cursorType === 'inside') {
+      newOffset = pos + openChar.length;
+    } else {
+      newOffset = target.start + openChar.length;
+    }
+    return {
+      target,
+      cursorType,
+      rangeStart: target.start,
+      rangeEnd: target.end,
+      replacementText: `${openChar}${targetText}${closeChar}`,
+      newOffset,
+    };
+  } else {
+    return {
+      target: null,
+      cursorType: 'empty',
+      rangeStart: pos,
+      rangeEnd: pos,
+      replacementText: `${openChar}${closeChar}`,
+      newOffset: pos + openChar.length,
+    };
+  }
 }
 
 function wrapWith(
@@ -540,55 +635,30 @@ function wrapWith(
   }
 
   const pos = model.getOffsetAt(editor.getPosition()!);
+  const wrap = computeSmartWrap(text, pos, openChar, closeChar);
 
-  // Try paredit.js wrapAround
-  try {
-    const ast = paredit.parse(text);
-    const res = paredit.editor.wrapAround(ast, text, pos, openChar, closeChar, { count: 1 });
-    if (res && applyPareditResult(editor, res)) {
-      return { success: true, detail: `${actionName}: S-expression wrapped` };
-    }
-  } catch {}
+  const pStart = model.getPositionAt(wrap.rangeStart);
+  const pEnd = model.getPositionAt(wrap.rangeEnd);
+  const range = new monaco.Range(pStart.lineNumber, pStart.column, pEnd.lineNumber, pEnd.column);
 
-  // Fallback
-  const roots = parseSexpressions(text);
-  const node = findInnermostNodeAt(roots, pos);
+  withParinferLock(() => {
+    editor.pushUndoStop();
+    editor.executeEdits('paredit', [
+      {
+        range,
+        text: wrap.replacementText,
+      },
+    ]);
+    const newPos = model.getPositionAt(wrap.newOffset);
+    editor.setPosition(newPos);
+    editor.revealPosition(newPos);
+    editor.pushUndoStop();
+  });
 
-  if (node) {
-    const nodeText = text.slice(node.start, node.end);
-    const pStart = model.getPositionAt(node.start);
-    const pEnd = model.getPositionAt(node.end);
-    const range = new monaco.Range(pStart.lineNumber, pStart.column, pEnd.lineNumber, pEnd.column);
-
-    withParinferLock(() => {
-      editor.pushUndoStop();
-      editor.executeEdits('paredit', [
-        {
-          range,
-          text: `${openChar}${nodeText}${closeChar}`,
-        },
-      ]);
-      editor.pushUndoStop();
-    });
-    return { success: true, detail: `${actionName}: innermost node wrapped` };
-  } else {
-    const curPos = editor.getPosition()!;
-    withParinferLock(() => {
-      editor.pushUndoStop();
-      editor.executeEdits('paredit', [
-        {
-          range: new monaco.Range(curPos.lineNumber, curPos.column, curPos.lineNumber, curPos.column),
-          text: `${openChar}${closeChar}`,
-        },
-      ]);
-      editor.setPosition({
-        lineNumber: curPos.lineNumber,
-        column: curPos.column + openChar.length,
-      });
-      editor.pushUndoStop();
-    });
-    return { success: true, detail: `${actionName}: empty pair inserted` };
-  }
+  return {
+    success: true,
+    detail: `${actionName}: ${wrap.target ? 'form wrapped with Calva smart affinity' : 'empty pair inserted'}`,
+  };
 }
 
 /**

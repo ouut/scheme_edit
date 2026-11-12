@@ -37,7 +37,7 @@ export const SHORTCUTS_LIST: ShortcutItem[] = [
     stars: 4,
     percentage: '25%',
     mnemonic: 'Hold/Hug 主键区左侧包裹 (零死键)',
-    description: 'cards → (cards)，单键把变量变成函数调用（彻底免除 Mac 死键干扰）。',
+    description: 'Calva 智能吸附包裹：贴尾 define| 包裹左侧为 (define|)，空格中包裹右侧，空白处插入 ()。',
     category: 'wrap_slurp',
   },
   {
@@ -49,7 +49,7 @@ export const SHORTCUTS_LIST: ShortcutItem[] = [
     stars: 4,
     percentage: '25%',
     mnemonic: 'Hold square 方括号包裹 (零死键)',
-    description: 'x 10 → [x 10]，写 let* 局部变量和 cond 必备。',
+    description: 'Calva 智能吸附方括号包裹：支持贴尾/内部/头部/空格智能吸附，写 let* 局部变量和 cond 必备。',
     category: 'wrap_slurp',
   },
   {

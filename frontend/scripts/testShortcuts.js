@@ -33,20 +33,193 @@ function assert(condition, message) {
   assert(ast && ast.children && ast.children.length === 1, '2. Eval REPL (Alt+Enter / Ctrl+Enter): AST parseable and ready for /api/eval');
 }
 
-// 3. Alt + H : Wrap Parens
+// Helper implementation of Calva smart affinity parser & wrap logic
+function parseSexpressions(text) {
+  const stack = [];
+  const roots = [];
+  let i = 0;
+  const len = text.length;
+
+  while (i < len) {
+    const ch = text[i];
+    if (/\s/.test(ch)) { i++; continue; }
+    if (ch === ';') {
+      const start = i;
+      while (i < len && text[i] !== '\n') i++;
+      const node = { start, end: i, type: 'comment' };
+      if (stack.length > 0) stack[stack.length - 1].children.push(node);
+      else roots.push(node);
+      continue;
+    }
+    if (ch === '(' || ch === '[' || ch === '{') {
+      const node = {
+        start: i,
+        end: i + 1,
+        type: 'list',
+        openChar: ch,
+        closeChar: ch === '(' ? ')' : ch === '[' ? ']' : '}',
+        children: [],
+      };
+      stack.push({ node, children: [] });
+      i++;
+      continue;
+    }
+    if (ch === ')' || ch === ']' || ch === '}') {
+      if (stack.length > 0) {
+        const top = stack.pop();
+        top.node.end = i + 1;
+        top.node.children = top.children;
+        if (stack.length > 0) stack[stack.length - 1].children.push(top.node);
+        else roots.push(top.node);
+      }
+      i++;
+      continue;
+    }
+    const start = i;
+    while (i < len && !/[\s()[\]{}";]/.test(text[i])) i++;
+    const node = { start, end: i, type: 'atom' };
+    if (stack.length > 0) stack[stack.length - 1].children.push(node);
+    else roots.push(node);
+  }
+  while (stack.length > 0) {
+    const top = stack.pop();
+    top.node.end = len;
+    top.node.children = top.children;
+    if (stack.length > 0) stack[stack.length - 1].children.push(top.node);
+    else roots.push(top.node);
+  }
+  return roots;
+}
+
+function findEnclosingWithParent(roots, pos) {
+  let enclosing = null;
+  let parent = null;
+
+  function traverse(nodes, currentParent) {
+    for (const node of nodes) {
+      if (node.type === 'list' && pos > node.start && pos < node.end) {
+        enclosing = node;
+        parent = currentParent;
+        if (node.children) {
+          traverse(node.children, node);
+        }
+      }
+    }
+  }
+
+  traverse(roots, null);
+  return { enclosing, parent };
+}
+
+function computeSmartWrap(text, pos, openChar = '(', closeChar = ')') {
+  const roots = parseSexpressions(text);
+  const { enclosing } = findEnclosingWithParent(roots, pos);
+  const siblings = (enclosing ? (enclosing.children || []) : roots)
+    .filter(n => n.type !== 'comment');
+
+  let target = null;
+  let cursorType = 'start';
+
+  const touchingEnd = siblings.find(
+    s => s.end === pos && pos > 0 && !/\s/.test(text[pos - 1])
+  );
+  if (touchingEnd) {
+    target = touchingEnd;
+    cursorType = 'end';
+  }
+
+  if (!target) {
+    const inside = siblings.find(s => s.start < pos && pos < s.end);
+    if (inside) {
+      target = inside;
+      cursorType = 'inside';
+    }
+  }
+
+  if (!target) {
+    const touchingStart = siblings.find(s => s.start === pos);
+    if (touchingStart) {
+      target = touchingStart;
+      cursorType = 'start';
+    }
+  }
+
+  if (!target) {
+    const forward = siblings.find(s => s.start > pos);
+    if (forward) {
+      target = forward;
+      cursorType = 'forward';
+    }
+  }
+
+  if (target) {
+    const targetText = text.slice(target.start, target.end);
+    let newOffset;
+    if (cursorType === 'end') {
+      newOffset = target.end + openChar.length;
+    } else if (cursorType === 'inside') {
+      newOffset = pos + openChar.length;
+    } else {
+      newOffset = target.start + openChar.length;
+    }
+    return {
+      target,
+      cursorType,
+      rangeStart: target.start,
+      rangeEnd: target.end,
+      replacementText: `${openChar}${targetText}${closeChar}`,
+      newOffset,
+    };
+  } else {
+    return {
+      target: null,
+      cursorType: 'empty',
+      rangeStart: pos,
+      rangeEnd: pos,
+      replacementText: `${openChar}${closeChar}`,
+      newOffset: pos + openChar.length,
+    };
+  }
+}
+
+// 3. Alt + H : Wrap Parens (Calva Smart Affinity)
 {
   const src = '(define cards 10)';
   const ast = paredit.parse(src);
   const res = paredit.editor.wrapAround(ast, src, 8, '(', ')', { count: 1 });
-  assert(res && res.changes.length === 2 && res.changes[0][2] === '(' && res.changes[1][2] === ')', '3. Wrap Parens (Alt+H): wraps with ()');
+  assert(res && res.changes.length === 2 && res.changes[0][2] === '(' && res.changes[1][2] === ')', '3a. Wrap Parens (Alt+H): wraps with ()');
+
+  // Calva Smart Affinity 1: define| x wraps left token define -> (define) x with cursor at (define|)
+  const testSrc1 = 'define x';
+  const wrap1 = computeSmartWrap(testSrc1, 6, '(', ')');
+  const applied1 = testSrc1.slice(0, wrap1.rangeStart) + wrap1.replacementText + testSrc1.slice(wrap1.rangeEnd);
+  assert(applied1 === '(define) x' && wrap1.newOffset === 7, '3b. Calva Smart Affinity: define| x wraps left token to (define|) x');
+
+  // Calva Smart Affinity 2: define| at end of line wraps to (define|)
+  const testSrc2 = 'define';
+  const wrap2 = computeSmartWrap(testSrc2, 6, '(', ')');
+  const applied2 = testSrc2.slice(0, wrap2.rangeStart) + wrap2.replacementText + testSrc2.slice(wrap2.rangeEnd);
+  assert(applied2 === '(define)' && wrap2.newOffset === 7, '3c. Calva Smart Affinity: define| wraps to (define|)');
+
+  // Calva Smart Affinity 3: define |x wraps forward token to define (|x)
+  const testSrc3 = 'define x';
+  const wrap3 = computeSmartWrap(testSrc3, 7, '(', ')');
+  const applied3 = testSrc3.slice(0, wrap3.rangeStart) + wrap3.replacementText + testSrc3.slice(wrap3.rangeEnd);
+  assert(applied3 === 'define (x)' && wrap3.newOffset === 8, '3d. Calva Smart Affinity: define |x wraps right token to define (|x)');
 }
 
-// 4. Alt + Shift + H : Wrap Square
+// 4. Alt + Shift + H : Wrap Square (Calva Smart Affinity)
 {
   const src = '(let* (x 10) x)';
   const ast = paredit.parse(src);
   const res = paredit.editor.wrapAround(ast, src, 7, '[', ']', { count: 1 });
-  assert(res && res.changes.length === 2 && res.changes[0][2] === '[' && res.changes[1][2] === ']', '4. Wrap Square (Alt+Shift+H): wraps with []');
+  assert(res && res.changes.length === 2 && res.changes[0][2] === '[' && res.changes[1][2] === ']', '4a. Wrap Square (Alt+Shift+H): wraps with []');
+
+  // Calva Smart Affinity Square: (let* |x 10) wraps x to [x]
+  const testSquare = '(let* x 10)';
+  const wrapSq = computeSmartWrap(testSquare, 6, '[', ']');
+  const appliedSq = testSquare.slice(0, wrapSq.rangeStart) + wrapSq.replacementText + testSquare.slice(wrapSq.rangeEnd);
+  assert(appliedSq === '(let* [x] 10)' && wrapSq.newOffset === 7, '4b. Calva Smart Affinity: (let* |x 10) wraps with square brackets to (let* [|x] 10)');
 }
 
 // 5. Alt + L : Slurp
