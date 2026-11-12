@@ -4,6 +4,7 @@
 结合了 **Monaco Editor**、**Strict Paredit**、**Parinfer**、**真实 PTY 统一终端 (Steel REPL + Bash)** 与 **零依赖终端 GUI 拦截系统**。
 
 专为高效生产与严格测试 [`docs/strict_paredit_guide.md`](docs/strict_paredit_guide.md) 中定义的 **17 个单发（One-Shot）极速快捷键** 而设计。
+底层 AST 状态机、Calva 智能吸附与精确算法规范详见 📖 [**`docs/strict_paredit_algorithm_spec.md`**](docs/strict_paredit_algorithm_spec.md)。
 
 ---
 
@@ -112,8 +113,8 @@ IDE 启动后自动输出就绪横幅并探测网络 IP：
 | :--- | :--- | :--- | :--- | :--- |
 | ⭐⭐⭐⭐⭐ (45%) | **`Alt + K`** | **`⌥ + K`** | **向外扩选** (Expand) | 自动严丝合缝选中当前 `(...)`，连按扩大一层括号 |
 | ⭐⭐⭐⭐⭐ (45%) | **`Alt + Enter` / `Ctrl + Enter`** | **`⌥ + ↵` / `⌘ + ↵`** | **发射求值** (Eval REPL) | 选中代码或当前表达式立即送入 Steel REPL |
-| ⭐⭐⭐⭐ (25%) | **`Alt + H`** | **`⌥ + H`** | **圆括号包裹** (Wrap Parens) | `cards` $\rightarrow$ `(cards)`（Hold/Hug 零死键） |
-| ⭐⭐⭐⭐ (25%) | **`Alt + Shift + H`** | **`⌥ + ⇧ + H`** | **方括号包裹** (Wrap Square) | `x 10` $\rightarrow$ `[x 10]`（Hold square 零死键） |
+| ⭐⭐⭐⭐ (25%) | **`Alt + H`** | **`⌥ + H`** | **圆括号包裹** (Wrap Parens) | Calva 智能吸附：贴尾 `define\|` 包裹为 `(define\|)`；空格中包裹右侧；空白处插入 `(\|) ` |
+| ⭐⭐⭐⭐ (25%) | **`Alt + Shift + H`** | **`⌥ + ⇧ + H`** | **方括号包裹** (Wrap Square) | `x 10` $\rightarrow$ `[x 10]`（Calva 智能吸附方括号包裹，写 `let*` 和 `cond` 必备） |
 | ⭐⭐⭐⭐ (20%) | **`Alt + L`** | **`⌥ + L`** | **向右吞噬** (Slurp) | `(a b) c` $\rightarrow$ `(a b c)`（L 偏右吸入） |
 | ⭐⭐⭐⭐ (20%) | **`Alt + J`** | **`⌥ + J`** | **向左吐出** (Barf) | `(a b c)` $\rightarrow$ `(a b) c`（J 偏左收缩） |
 | ⭐⭐⭐ (15%) | **`Alt + Shift + K`** | **`⌥ + ⇧ + K`** | **向内收缩** (Contract) | 选区历史回退 / 向内缩一级（方案 A 零死键，兼容 `Alt+I`） |

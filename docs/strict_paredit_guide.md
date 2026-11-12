@@ -1,5 +1,7 @@
 # VS Code 网页版 Scheme / Strict Paredit 专属极速快捷键手册
 
+> 💡 **开发者实现参考**：全套快捷键的 AST 语法树算法、Calva 智能吸附、状态机伪代码与边界条件，请参阅 📖 [Strict Paredit 快捷键算法与实现规范 (strict_paredit_algorithm_spec.md)](./strict_paredit_algorithm_spec.md)。
+
 > **设计哲学**：
 > 1. **彻底废除 Leader 两阶段**：纯单发（One-Shot），按一下立刻生效，绝不搞 Vim 模态！
 > 2. **左手大拇指锚定 Alt（Mac: Option / ⌥）**：100% 避开浏览器关闭标签（`Ctrl+W`）、网页后退（`Alt+←`）和 macOS 调度中心（`Ctrl+方向键`）。
@@ -41,8 +43,8 @@
 | --- | --- | --- | --- | --- | --- |
 | ⭐⭐⭐⭐⭐<br>(45%) | **`Alt + K`** | **`⌥ + K`** | **向外扩选** (Expand) | 右手主键位纵向扩张 | 自动严丝合缝选中当前 `(...)`，连按扩大一层括号。配合求值极度丝滑！ |
 | ⭐⭐⭐⭐⭐<br>(45%) | **`Alt + Enter`<br>或 `Ctrl + Enter`** | **`⌥ + ↵`<br>或 `⌘ + ↵`** | **发射求值** (Eval REPL) | 拇指锚定，右手一拍回车 | 将当前选中的代码立即送入 Steel REPL 运行并吐出结果。 |
-| ⭐⭐⭐⭐<br>(25%) | **`Alt + H`** | **`⌥ + H`** | **圆括号包裹** (Wrap Parens) | Hold/Hug 左侧包裹 (零死键) | `cards` $\rightarrow$ `(cards)`，单键把变量变成函数调用。 |
-| ⭐⭐⭐⭐<br>(25%) | **`Alt + Shift + H`** | **`⌥ + ⇧ + H`** | **方括号包裹** (Wrap Square) | Hold square 方括号 | `x 10` $\rightarrow$ `[x 10]`，写 `let*` 局部变量和 `cond` 必备。 |
+| ⭐⭐⭐⭐<br>(25%) | **`Alt + H`** | **`⌥ + H`** | **圆括号包裹** (Wrap Parens) | Hold/Hug 左侧包裹 (Calva 智能吸附) | 贴尾 `define\|` 包裹为 `(define\|)`；空格中包裹右侧；空白处插入 `(\|) `。彻底免除 Mac 死键干扰。 |
+| ⭐⭐⭐⭐<br>(25%) | **`Alt + Shift + H`** | **`⌥ + ⇧ + H`** | **方括号包裹** (Wrap Square) | Hold square 方括号 (Calva 智能吸附) | `x 10` $\rightarrow$ `[x 10]`，智能支持贴尾/内部/头部/空格吸附，写 `let*` 局部变量和 `cond` 必备。 |
 | ⭐⭐⭐⭐<br>(20%) | **`Alt + L`** | **`⌥ + L`** | **向右吞噬** (Slurp) | 右手 L（偏右吸入扩张） | `(a b) c` $\rightarrow$ `(a b c)`，右括号向右跨越一个元素。 |
 | ⭐⭐⭐⭐<br>(20%) | **`Alt + J`** | **`⌥ + J`** | **向左吐出** (Barf) | 右手 J（偏左吐出收缩） | `(a b c)` $\rightarrow$ `(a b) c`，右括号向左收缩，踢出末尾项。 |
 | ⭐⭐⭐<br>(15%) | **`Alt + Shift + K`** | **`⌥ + ⇧ + K`** | **向内收缩** (Contract) | 右手主键纵向收缩 (与 Alt+K 呼应) | 与 `Alt+K` 呼应，基于历史栈回退，扩选过头随时往回收一级（兼容 `Alt+I`）。 |
