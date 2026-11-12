@@ -33,6 +33,7 @@ import {
   indent,
   transposeSexp,
   splitSexp,
+  openLineBelowTopLevel,
 } from '../lib/pareditEngine';
 import { ShortcutId, ParinferMode } from '../types';
 
@@ -449,6 +450,18 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         }
       );
 
+      // Shift + Enter : 在顶层 S 表达式下方智能开辟新行 (Open Line Below Top-Level)
+      editor.addCommand(
+        monaco.KeyMod.Shift | monaco.KeyCode.Enter,
+        () => {
+          if (isSchemeFile(filePathRef.current)) {
+            openLineBelowTopLevel(editor);
+          } else {
+            editor.trigger('keyboard', 'type', { text: '\n' });
+          }
+        }
+      );
+
       // 3. Alt + H : 圆括号包裹 (Wrap Parens, 兼顾 Alt+U/P)
       addSchemeAction(
         'scheme.action.wrap_parens',
@@ -632,6 +645,18 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
           lastAltActionTime = Date.now();
           editor.focus();
           executeAction('eval_repl');
+          return;
+        }
+
+        // Open line below top-level S-expression: Shift+Enter
+        if (
+          isShift && !isCtrl && !isAlt &&
+          (code === 'Enter' || code === 'NumpadEnter' || key === 'Enter')
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
+          editor.focus();
+          openLineBelowTopLevel(editor);
           return;
         }
 

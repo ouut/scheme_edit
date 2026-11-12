@@ -59,6 +59,15 @@ export const GLOBAL_NAVIGATION_SHORTCUTS: GlobalNavigationShortcut[] = [
     description: '在当前活动窗格（编辑器文件或终端）中循环向后切换标签页。到达末尾 Tab 时自动无缝回绕至首个 Tab。',
     mnemonic: '向右循环切进标签',
   },
+  {
+    id: 'open-line-below',
+    keys: 'Shift + Enter',
+    macKeys: '⇧ + ↵',
+    name: '顶层智能开辟新行',
+    enName: 'Open Line Below Top-Level',
+    description: '无论光标陷在括号嵌套多深的位置，一键瞬间穿透当前顶层 S 表达式的最外层尾部，并插入新行光标就位。',
+    mnemonic: '顶层换行神技',
+  },
 ];
 
 export interface GuiCliCommand {

@@ -3,6 +3,7 @@ import { TerminalTab, TerminalTabHandle } from './TerminalTab';
 import { TerminalTabItem, GuiActionPayload } from '../types';
 import { Plus, X, Terminal as TerminalIcon, HelpCircle } from 'lucide-react';
 import { ShortcutsHelpModal } from './ShortcutsHelpModal';
+import { parseSexpressions } from '../lib/pareditEngine';
 
 export interface TerminalPanelProps {
   onGuiAction: (payload: GuiActionPayload) => void;
@@ -21,14 +22,18 @@ export interface TerminalPanelHandle {
 
 export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(
   ({ onGuiAction, onFocus }, ref) => {
+    // Default cold start: only open ONE shell tab (bash 1), no built-in REPL
     const [tabs, setTabs] = useState<TerminalTabItem[]>([
-      { id: 'repl', title: 'λ REPL', cmd: 'steel', closable: false },
       { id: 'bash-1', title: 'bash 1', cmd: 'bash', closable: true },
     ]);
     const [activeTabId, setActiveTabId] = useState<string>('bash-1');
     const [bashCounter, setBashCounter] = useState<number>(2);
     const [isHelpOpen, setIsHelpOpen] = useState<boolean>(false);
 
+    const tabsRef = useRef(tabs);
+    tabsRef.current = tabs;
+
+    const pendingReplInputRef = useRef<string | null>(null);
     const tabRefs = useRef<Map<string, TerminalTabHandle>>(new Map());
 
     // Create new bash tab
@@ -51,17 +56,18 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
       }, 50);
     }, [bashCounter]);
 
-    // Close a bash tab (Tab 1 cannot be closed)
+    // Close a terminal tab
     const handleCloseTab = useCallback(
       (idToClose: string, e: React.MouseEvent) => {
         e.stopPropagation();
         setTabs((prev) => {
+          if (prev.length <= 1) return prev;
           const tabIndex = prev.findIndex((t) => t.id === idToClose);
           const nextTabs = prev.filter((t) => t.id !== idToClose);
 
           if (activeTabId === idToClose) {
             const nextActiveIndex = Math.max(0, tabIndex - 1);
-            const nextActiveId = nextTabs[nextActiveIndex]?.id || 'repl';
+            const nextActiveId = nextTabs[nextActiveIndex]?.id || nextTabs[0]?.id || 'bash-1';
             setActiveTabId(nextActiveId);
             setTimeout(() => {
               tabRefs.current.get(nextActiveId)?.focus();
@@ -84,16 +90,50 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
       return () => clearTimeout(timer);
     }, []);
 
-    // Send code to Tab 1 ("λ REPL")
+    // Send code to unique "λ REPL" (lazily created on first eval, reused thereafter)
     const handleSendToRepl = useCallback((code: string) => {
-      // 1. Switch active tab to Tab 1
-      setActiveTabId('repl');
+      // 1. Prepare code: If multiple top-level S-expressions are selected/sent,
+      // wrap them in (begin ...) according to Scheme R5RS/R7RS top-level specifications.
+      // This ensures atomic execution in Steel REPL without rustyline cursor query race conditions
+      // eating characters or dropping following expressions.
+      let codeToSend = code.trim();
+      try {
+        const roots = parseSexpressions(codeToSend).filter((n) => n.type !== 'comment');
+        if (roots.length > 1) {
+          codeToSend = `(begin\n${codeToSend}\n)`;
+        }
+      } catch (err) {
+        // keep codeToSend as-is if parsing fails
+      }
 
-      // 2. Send code + '\n', scroll to bottom (do not steal focus from code editor)
-      const replTab = tabRefs.current.get('repl');
-      if (replTab) {
-        replTab.sendInput(code + '\n');
-        replTab.scrollToBottom();
+      const fullInput = codeToSend + '\n';
+      const currentTabs = tabsRef.current;
+      const hasRepl = currentTabs.some((t) => t.id === 'repl');
+
+      if (!hasRepl) {
+        // Lazy spawn unique λ REPL as Tab 1
+        const replTab: TerminalTabItem = {
+          id: 'repl',
+          title: 'λ REPL',
+          cmd: 'steel',
+          closable: true,
+        };
+        pendingReplInputRef.current = fullInput;
+        setTabs((prev) => {
+          if (prev.some((t) => t.id === 'repl')) return prev;
+          return [replTab, ...prev];
+        });
+        setActiveTabId('repl');
+      } else {
+        // Existing λ REPL: activate and send
+        setActiveTabId('repl');
+        const replTab = tabRefs.current.get('repl');
+        if (replTab) {
+          replTab.sendInput(fullInput);
+          replTab.scrollToBottom();
+        } else {
+          pendingReplInputRef.current = fullInput;
+        }
       }
     }, []);
 
@@ -193,7 +233,7 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
                   )}
                   <span>{tab.title}</span>
 
-                  {tab.closable && (
+                  {tab.closable && tabs.length > 1 && (
                     <button
                       onClick={(e) => handleCloseTab(tab.id, e)}
                       className="ml-1 text-[#565f89] hover:text-[#f7768e] hover:bg-[#f7768e]/15 rounded p-0.5 transition-colors"
@@ -245,6 +285,12 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
                   ref={(el) => {
                     if (el) {
                       tabRefs.current.set(tab.id, el);
+                      if (tab.id === 'repl' && pendingReplInputRef.current) {
+                        const pending = pendingReplInputRef.current;
+                        pendingReplInputRef.current = null;
+                        el.sendInput(pending);
+                        el.scrollToBottom();
+                      }
                     } else {
                       tabRefs.current.delete(tab.id);
                     }

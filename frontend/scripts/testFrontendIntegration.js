@@ -100,16 +100,44 @@ function assert(condition, message) {
   assert(computeRatio(0, 100) === 0, '5c. Ratio 0:100 -> 0 (collapse)');
 }
 
-// 6. Terminal Tab Model: Pinned λ REPL + closable bash tabs
+// 6. Terminal Tabs Configuration (Cold start with bash 1, lazy-spawned unique λ REPL on eval)
 {
-  const tabs = [
-    { id: 'repl', title: 'λ REPL', cmd: 'steel', closable: false },
+  const initialTabs = [
     { id: 'bash-1', title: 'bash 1', cmd: 'bash', closable: true },
   ];
-  assert(tabs[0].closable === false && tabs[0].cmd === 'steel', '6a. Tab 1 is λ REPL running Steel, pinned and unclosable');
-  assert(tabs[1].closable === true && tabs[1].cmd === 'bash', '6b. Tab 2+ is bash PTY, closable');
-  const defaultActiveTabId = 'bash-1';
-  assert(tabs.length === 2 && defaultActiveTabId === 'bash-1', '6c. Initial state opens both λ REPL and bash 1, with bash 1 active');
+  assert(initialTabs.length === 1 && initialTabs[0].cmd === 'bash', '6a. Initial cold start state has only ONE shell tab (bash 1)');
+  assert(initialTabs[0].id === 'bash-1', '6b. Default active tab is bash-1, no built-in REPL on cold start');
+
+  // Simulate lazy spawn on S-exp evaluation
+  let tabs = [...initialTabs];
+  let activeTabId = 'bash-1';
+
+  function sendToRepl(code) {
+    if (!tabs.some(t => t.id === 'repl')) {
+      const replTab = { id: 'repl', title: 'λ REPL', cmd: 'steel', closable: true };
+      tabs = [replTab, ...tabs];
+    }
+    activeTabId = 'repl';
+  }
+
+  // 1st eval: lazily creates λ REPL and activates it
+  sendToRepl('(define x 10)');
+  assert(tabs.length === 2 && tabs[0].id === 'repl' && tabs[0].cmd === 'steel', '6c. First eval lazily spawns unique λ REPL as Tab 1');
+  assert(tabs[0].closable === true, '6d. λ REPL is closable for clean environment reset');
+  assert(activeTabId === 'repl', '6e. Active tab automatically switches to λ REPL on eval');
+
+  // 2nd eval from another file: reuses the existing λ REPL
+  sendToRepl('(define y 20)');
+  assert(tabs.length === 2, '6f. Subsequent evaluations reuse the existing unique λ REPL');
+
+  // Close λ REPL
+  tabs = tabs.filter(t => t.id !== 'repl');
+  activeTabId = 'bash-1';
+  assert(tabs.length === 1 && tabs[0].id === 'bash-1', '6g. Closing λ REPL cleans it up');
+
+  // 3rd eval after close: recreates a fresh λ REPL
+  sendToRepl('(define z 30)');
+  assert(tabs.length === 2 && tabs[0].id === 'repl', '6h. Re-evaluating after closing recreates a clean λ REPL');
 }
 
 // 7. Monaco S-expression extraction for REPL
@@ -375,6 +403,34 @@ function assert(condition, message) {
   }
   assert(getClampedRatio({ splitRatio: 0.75 }) === 0.75, '15i. Valid splitRatio is respected');
   assert(getClampedRatio({ splitRatio: 0.01 }) === 0.6, '15j. Out-of-bounds splitRatio falls back to default 0.6');
+}
+
+// 16. Multi-expression wrap in (begin ...) for atomic REPL evaluation
+{
+  function prepareCodeForRepl(code) {
+    const trimmed = code.trim();
+    try {
+      const ast = paredit.parse(trimmed);
+      const roots = (ast.children || []).filter((n) => n.type !== 'comment');
+      if (roots.length > 1) {
+        return `(begin\n${trimmed}\n)`;
+      }
+    } catch (e) {}
+    return trimmed;
+  }
+
+  const singleExpr = '(define (fib n) 1)';
+  assert(prepareCodeForRepl(singleExpr) === singleExpr, '16a. Single S-expression is sent as-is');
+
+  const multiExpr = `(define (fib n)
+  (cond ((= n 0) 0)
+        ((= n 1) 1)
+        (else (+ (fib (- n 1)) (fib (- n 2))))))
+
+(fib 4)`;
+  const wrapped = prepareCodeForRepl(multiExpr);
+  assert(wrapped.startsWith('(begin\n') && wrapped.endsWith('\n)'), '16b. Multi-expression code is wrapped in (begin ...) for atomic REPL evaluation');
+  assert(wrapped.includes('(fib 4)'), '16c. Wrapped code preserves all inner expressions');
 }
 
 console.log('================================================================');

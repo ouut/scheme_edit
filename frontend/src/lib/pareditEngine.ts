@@ -964,7 +964,19 @@ export function forwardSexp(editor: monaco.editor.IStandaloneCodeEditor): { succ
     }
   } catch {}
 
-  // 2. Fallback AST
+  // 2. If at or right before a closing delimiter, step past it
+  if (pos < text.length && /[)\]}]/.test(text[pos])) {
+    let nextPos = pos + 1;
+    while (nextPos < text.length && /\s/.test(text[nextPos]) && text[nextPos] !== '\n') {
+      nextPos++;
+    }
+    const p = model.getPositionAt(nextPos);
+    editor.setPosition(p);
+    editor.revealPosition(p);
+    return { success: true, detail: `Stepped past delimiter to ${nextPos}` };
+  }
+
+  // 3. Fallback AST: search next sibling or step outward to enclosing end
   const roots = parseSexpressions(text);
   const { enclosing } = findEnclosingWithParent(roots, pos);
   const siblings = enclosing ? enclosing.children || [] : roots;
@@ -974,8 +986,28 @@ export function forwardSexp(editor: monaco.editor.IStandaloneCodeEditor): { succ
   let targetOffset: number | null = null;
   if (next) {
     targetOffset = next.start;
-  } else if (enclosing) {
+  } else if (enclosing && enclosing.end > pos) {
     targetOffset = enclosing.end;
+  } else {
+    // Look for ancestor whose end > pos
+    function findAncestorEnd(nodes: SexpNode[]): number | null {
+      let bestEnd: number | null = null;
+      function walk(list: SexpNode[]) {
+        for (const node of list) {
+          if (pos >= node.start && pos <= node.end) {
+            if (node.end > pos) {
+              if (bestEnd === null || node.end < bestEnd) {
+                bestEnd = node.end;
+              }
+            }
+            if (node.children) walk(node.children);
+          }
+        }
+      }
+      walk(roots);
+      return bestEnd;
+    }
+    targetOffset = findAncestorEnd(roots);
   }
 
   if (targetOffset !== null && targetOffset > pos) {
@@ -1021,7 +1053,15 @@ export function backwardSexp(editor: monaco.editor.IStandaloneCodeEditor): { suc
     }
   } catch {}
 
-  // 2. Fallback AST
+  // 2. If at or right after an opening delimiter, step before it
+  if (pos > 0 && /[(\[{]/.test(text[pos - 1])) {
+    const targetPos = model.getPositionAt(pos - 1);
+    editor.setPosition(targetPos);
+    editor.revealPosition(targetPos);
+    return { success: true, detail: `Stepped before delimiter to ${pos - 1}` };
+  }
+
+  // 3. Fallback AST
   const roots = parseSexpressions(text);
   const { enclosing } = findEnclosingWithParent(roots, pos);
   const siblings = enclosing ? enclosing.children || [] : roots;
@@ -1032,8 +1072,27 @@ export function backwardSexp(editor: monaco.editor.IStandaloneCodeEditor): { suc
   if (candidates.length > 0) {
     const prev = candidates[candidates.length - 1];
     targetOffset = prev.start;
-  } else if (enclosing) {
+  } else if (enclosing && enclosing.start < pos) {
     targetOffset = enclosing.start;
+  } else {
+    function findAncestorStart(nodes: SexpNode[]): number | null {
+      let bestStart: number | null = null;
+      function walk(list: SexpNode[]) {
+        for (const node of list) {
+          if (pos >= node.start && pos <= node.end) {
+            if (node.start < pos) {
+              if (bestStart === null || node.start > bestStart) {
+                bestStart = node.start;
+              }
+            }
+            if (node.children) walk(node.children);
+          }
+        }
+      }
+      walk(roots);
+      return bestStart;
+    }
+    targetOffset = findAncestorStart(roots);
   }
 
   if (targetOffset !== null && targetOffset < pos) {
@@ -1396,6 +1455,57 @@ export function splitSexp(editor: monaco.editor.IStandaloneCodeEditor): { succes
   }
 
   return { success: false, detail: 'Not inside a list' };
+}
+
+/**
+ * Shift + Enter : 在顶层 S 表达式尾部智能开辟新行 (Open Line Below Top-Level)
+ */
+export function openLineBelowTopLevel(editor: monaco.editor.IStandaloneCodeEditor): { success: boolean; detail?: string } {
+  const model = editor.getModel();
+  if (!model) return { success: false, detail: 'No model' };
+
+  const pos = model.getOffsetAt(editor.getPosition()!);
+  const text = model.getValue();
+  const roots = parseSexpressions(text);
+  const top = findTopLevelNode(roots, pos);
+
+  if (top) {
+    const endPos = model.getPositionAt(top.end);
+    editor.setPosition(endPos);
+    withParinferLock(() => {
+      editor.pushUndoStop();
+      editor.executeEdits('paredit', [
+        {
+          range: new monaco.Range(endPos.lineNumber, endPos.column, endPos.lineNumber, endPos.column),
+          text: '\n\n',
+        },
+      ]);
+      editor.pushUndoStop();
+    });
+    const newPos = new monaco.Position(endPos.lineNumber + 2, 1);
+    editor.setPosition(newPos);
+    editor.revealPosition(newPos);
+    return { success: true, detail: 'Opened new line below top-level S-expression' };
+  } else {
+    const position = editor.getPosition()!;
+    const lineLen = model.getLineLength(position.lineNumber);
+    const endOfLine = new monaco.Position(position.lineNumber, lineLen + 1);
+    editor.setPosition(endOfLine);
+    withParinferLock(() => {
+      editor.pushUndoStop();
+      editor.executeEdits('paredit', [
+        {
+          range: new monaco.Range(endOfLine.lineNumber, endOfLine.column, endOfLine.lineNumber, endOfLine.column),
+          text: '\n',
+        },
+      ]);
+      editor.pushUndoStop();
+    });
+    const newPos = new monaco.Position(endOfLine.lineNumber + 1, 1);
+    editor.setPosition(newPos);
+    editor.revealPosition(newPos);
+    return { success: true, detail: 'Inserted newline below line' };
+  }
 }
 
 /**
