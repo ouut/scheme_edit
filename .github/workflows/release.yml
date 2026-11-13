@@ -56,9 +56,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           cargo build --release --target ${{ matrix.platform.target }} --manifest-path server/Cargo.toml
-          curl -sL https://github.com/mattwparas/steel/releases/download/v0.8.2/steel-interpreter-x86_64-unknown-linux-gnu.tar.xz | tar -xJ --strip-components=1 -C server/target/${{ matrix.platform.target }}/release steel-interpreter-x86_64-unknown-linux-gnu/steel || true
-          [ -f server/target/${{ matrix.platform.target }}/release/steel ] && chmod +x server/target/${{ matrix.platform.target }}/release/steel || true
-          tar -czvf ${{ matrix.platform.artifact_name }} -C server/target/${{ matrix.platform.target }}/release scheme-ide $([ -f server/target/${{ matrix.platform.target }}/release/steel ] && echo "steel")
+          tar -czvf ${{ matrix.platform.artifact_name }} -C server/target/${{ matrix.platform.target }}/release scheme-ide
 
       - name: Build binary (macOS Universal)
         if: runner.os == 'macOS'
@@ -70,13 +68,8 @@ jobs:
           lipo -create -output server/target/universal/scheme-ide \
             server/target/aarch64-apple-darwin/release/scheme-ide \
             server/target/x86_64-apple-darwin/release/scheme-ide
-          mkdir -p /tmp/steel-arm
-          curl -sL https://github.com/mattwparas/steel/releases/download/v0.8.2/steel-interpreter-aarch64-apple-darwin.tar.xz | tar -xJ --strip-components=1 -C /tmp/steel-arm steel-interpreter-aarch64-apple-darwin/steel || true
-          if [ -f /tmp/steel-arm/steel ]; then
-            cp /tmp/steel-arm/steel server/target/universal/steel
-            chmod +x server/target/universal/steel
-          fi
-          tar -czvf ${{ matrix.platform.artifact_name }} -C server/target/universal scheme-ide $([ -f server/target/universal/steel ] && echo "steel")
+          chmod +x server/target/universal/scheme-ide
+          tar -czvf ${{ matrix.platform.artifact_name }} -C server/target/universal scheme-ide
 
       - name: Build binary (Windows)
         if: runner.os == 'Windows'
@@ -89,16 +82,8 @@ jobs:
             }
           }
           cargo build --release --target ${{ matrix.platform.target }} --manifest-path server/Cargo.toml
-          New-Item -ItemType Directory -Force -Path "dist_win/bin/windows"
+          New-Item -ItemType Directory -Force -Path "dist_win"
           Copy-Item "server/target/${{ matrix.platform.target }}/release/scheme-ide.exe" "dist_win/scheme-ide.exe"
-          Copy-Item "bin/windows/*.exe" "dist_win/bin/windows/"
-          try {
-            Invoke-WebRequest -Uri "https://github.com/mattwparas/steel/releases/download/v0.8.2/steel-interpreter-x86_64-pc-windows-msvc.zip" -OutFile "steel.zip"
-            Expand-Archive -Path "steel.zip" -DestinationPath "steel_tmp"
-            Copy-Item "steel_tmp/steel-interpreter-x86_64-pc-windows-msvc/steel.exe" "dist_win/steel.exe"
-          } catch {
-            Write-Warning "Could not download external steel.exe: $_"
-          }
           Compress-Archive -Path "dist_win\*" -DestinationPath ${{ matrix.platform.artifact_name }}
 
       - name: Upload Build Artifact

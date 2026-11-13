@@ -40,8 +40,13 @@ pub struct SteelReplProcess {
 impl SteelReplProcess {
     pub async fn spawn(steel_bin: &Path) -> Result<Self, std::io::Error> {
         let is_self = std::env::current_exe()
-            .map(|exe| exe == *steel_bin)
-            .unwrap_or(false);
+            .map(|exe| terminal::clean_windows_path(&exe) == terminal::clean_windows_path(steel_bin))
+            .unwrap_or(false)
+            || steel_bin
+                .file_name()
+                .and_then(|f| f.to_str())
+                .map(|s| s.eq_ignore_ascii_case("scheme-ide") || s.eq_ignore_ascii_case("scheme-ide.exe"))
+                .unwrap_or(false);
         let mut cmd = Command::new(steel_bin);
         if is_self {
             cmd.arg("--steel");
@@ -1028,10 +1033,23 @@ async fn main() {
         return;
     }
 
-    // 1. Embedded Steel REPL / evaluator subcommand
-    if args.len() > 1 && (args[1] == "--steel" || args[1] == "steel" || args[1] == "repl") {
+    // 1. Embedded Steel REPL / evaluator subcommand (`scheme-ide --steel` or invoked directly as `steel` / `steel.exe`)
+    let invoked_as_steel = args
+        .first()
+        .and_then(|a| Path::new(a).file_name())
+        .and_then(|f| f.to_str())
+        .map(|s| s.eq_ignore_ascii_case("steel") || s.eq_ignore_ascii_case("steel.exe"))
+        .unwrap_or(false);
+
+    if invoked_as_steel
+        || (args.len() > 1 && (args[1] == "--steel" || args[1] == "steel" || args[1] == "repl"))
+    {
         let mut sub_args = vec![args[0].clone()];
-        sub_args.extend_from_slice(&args[2..]);
+        if invoked_as_steel {
+            sub_args.extend_from_slice(&args[1..]);
+        } else {
+            sub_args.extend_from_slice(&args[2..]);
+        }
         use clap::Parser;
         let cli_args = steel_interpreter::SteelCliArgs::parse_from(sub_args);
         if let Err(e) = steel_interpreter::run(cli_args) {

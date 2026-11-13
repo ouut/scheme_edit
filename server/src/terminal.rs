@@ -173,10 +173,11 @@ pub fn populate_windows_unix_tools(
 ) {
     let _ = std::fs::create_dir_all(helper_dir);
 
-    // 1. Native `gui.exe` and `scheme-ide.exe` hardlinked/copied directly from `scheme-ide` binary
+    // 1. Native `gui.exe`, `steel.exe`, and `scheme-ide.exe` hardlinked/copied directly from `scheme-ide` binary
     if let Some(ide_bin) = scheme_ide_bin {
         if ide_bin.exists() {
             let _ = link_or_copy_binary(ide_bin, &helper_dir.join("gui.exe"));
+            let _ = link_or_copy_binary(ide_bin, &helper_dir.join("steel.exe"));
             let _ = link_or_copy_binary(ide_bin, &helper_dir.join("scheme-ide.exe"));
         }
     }
@@ -722,11 +723,15 @@ esac
             let _ = std::fs::set_permissions(usr_local_bin, std::fs::Permissions::from_mode(0o755));
         }
 
-        // Also ensure `scheme-ide` binary is directly accessible in helper_dir and /usr/local/bin
+        // Also ensure `scheme-ide` and `steel` binaries are directly accessible in helper_dir and /usr/local/bin
         if !scheme_ide_candidate.is_empty() {
             let ide_link = helper_dir.join("scheme-ide");
             if !ide_link.exists() {
                 let _ = std::os::unix::fs::symlink(Path::new(&scheme_ide_candidate), &ide_link);
+            }
+            let steel_link = helper_dir.join("steel");
+            if !steel_link.exists() {
+                let _ = std::os::unix::fs::symlink(Path::new(&scheme_ide_candidate), &steel_link);
             }
             let usr_ide = Path::new("/usr/local/bin/scheme-ide");
             if !usr_ide.exists() {
