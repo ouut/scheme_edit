@@ -64,8 +64,17 @@ try {
     Extract-SingleFileFromZip -ZipPath $RgZip -FileName "rg.exe" -DestPath (Join-Path $OutDir "rg.exe")
 
     # 4. busybox-w32
-    Write-Host "  [4/4] Fetching busybox-w32 (busybox64.exe)..."
-    Invoke-WebRequest -Uri $BusyboxUrl -OutFile (Join-Path $OutDir "busybox64.exe")
+    $BusyboxDest = Join-Path $OutDir "busybox64.exe"
+    $RepoBusybox = Join-Path (Split-Path -Parent $PSScriptRoot) "bin\windows\busybox64.exe"
+    if ((Test-Path $BusyboxDest) -and ((Get-Item $BusyboxDest).Length -gt 100000)) {
+        Write-Host "  [4/4] Using existing busybox64.exe in $OutDir"
+    } elseif ((Test-Path $RepoBusybox) -and ((Get-Item $RepoBusybox).Length -gt 100000)) {
+        Write-Host "  [4/4] Copying bundled busybox64.exe from repository..."
+        Copy-Item $RepoBusybox -Destination $BusyboxDest -Force
+    } else {
+        Write-Host "  [4/4] Fetching busybox-w32 (busybox64.exe)..."
+        & curl.exe -fL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" $BusyboxUrl -o $BusyboxDest
+    }
 
     Write-Host "==> Done! Binaries in ${OutDir}:" -ForegroundColor Green
     Get-ChildItem $OutDir | Select-Object Name, Length

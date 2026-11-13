@@ -78,12 +78,14 @@ pub const BUSYBOX_SHELL_AND_EXTRA_APPLETS: &[&str] = &[
     "clear", "which", "watch", "vi", "ps", "free", "top", "wget", "dos2unix", "unix2dos",
 ];
 
+#[cfg(windows)]
 #[derive(rust_embed::RustEmbed)]
 #[folder = "../bin/windows/"]
 pub struct EmbeddedWindowsBins;
 
 /// Extract embedded Windows tools (`coreutils.exe`, `find.exe`, `xargs.exe`, `rg.exe`, `busybox64.exe`)
 /// into `helper_dir/.vendor` if any embedded `.exe` assets exist in the binary.
+#[cfg(windows)]
 pub fn extract_embedded_windows_bins(helper_dir: &Path) -> Option<PathBuf> {
     let embedded_vendor = helper_dir.join(".vendor");
     let mut extracted_any = false;

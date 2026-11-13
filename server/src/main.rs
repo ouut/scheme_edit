@@ -1172,6 +1172,13 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
+    fn test_workspace_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+    }
+
     fn test_app() -> Router {
         let steel_bin = find_steel_binary();
         let steel_version = detect_steel_version(&steel_bin);
@@ -1185,7 +1192,7 @@ mod tests {
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
             port: 8085,
-            current_dir: Arc::new(tokio::sync::RwLock::new(PathBuf::from("/workspace/scheme_edit"))),
+            current_dir: Arc::new(tokio::sync::RwLock::new(test_workspace_dir())),
             active_terminal_pid: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         });
         create_app(state)
@@ -1580,7 +1587,7 @@ mod tests {
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
             port: 8085,
-            current_dir: Arc::new(tokio::sync::RwLock::new(PathBuf::from("/workspace/scheme_edit"))),
+            current_dir: Arc::new(tokio::sync::RwLock::new(test_workspace_dir())),
             active_terminal_pid: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         });
         let app = create_app(state);
@@ -1746,7 +1753,7 @@ mod tests {
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
             port: 8085,
-            current_dir: Arc::new(tokio::sync::RwLock::new(PathBuf::from("/workspace/scheme_edit"))),
+            current_dir: Arc::new(tokio::sync::RwLock::new(test_workspace_dir())),
             active_terminal_pid: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         });
         let app = create_app(state.clone());
@@ -1876,7 +1883,7 @@ mod tests {
             eval_counter: Arc::new(AtomicU64::new(1)),
             gui_broadcast,
             port: addr.port(),
-            current_dir: Arc::new(tokio::sync::RwLock::new(PathBuf::from("/workspace/scheme_edit"))),
+            current_dir: Arc::new(tokio::sync::RwLock::new(test_workspace_dir())),
             active_terminal_pid: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         });
         let app = create_app(state);
