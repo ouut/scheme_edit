@@ -14,40 +14,52 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 mkdir -p "$OUT_DIR"
 
-COREUTILS_VERSION="${COREUTILS_VERSION:-0.0.29}"
-FINDUTILS_VERSION="${FINDUTILS_VERSION:-0.7.0}"
-RIPGREP_VERSION="${RIPGREP_VERSION:-14.1.1}"
+COREUTILS_VERSION="${COREUTILS_VERSION:-0.12.0}"
+FINDUTILS_VERSION="${FINDUTILS_VERSION:-0.11.0}"
+RIPGREP_VERSION="${RIPGREP_VERSION:-15.2.0}"
 BUSYBOX_URL="${BUSYBOX_URL:-https://frippery.org/files/busybox/busybox64.exe}"
 
 echo "==> Downloading precompiled Windows x86_64 tools into: $OUT_DIR"
+
+extract_from_zip() {
+    local zip_path="$1"
+    local file_name="$2"
+    local dest_path="$3"
+    python3 - "$zip_path" "$file_name" "$dest_path" << 'PYEOF'
+import sys, zipfile, os, shutil
+zip_path, target_name, dest_path = sys.argv[1], sys.argv[2], sys.argv[3]
+with zipfile.ZipFile(zip_path, 'r') as zf:
+    for member in zf.namelist():
+        if os.path.basename(member).lower() == target_name.lower():
+            with zf.open(member) as src, open(dest_path, 'wb') as dst:
+                shutil.copyfileobj(src, dst)
+            sys.exit(0)
+print(f"ERROR: {target_name} not found in {zip_path}", file=sys.stderr)
+sys.exit(1)
+PYEOF
+}
 
 # 1. uutils/coreutils
 COREUTILS_ZIP="coreutils-${COREUTILS_VERSION}-x86_64-pc-windows-msvc.zip"
 COREUTILS_URL="https://github.com/uutils/coreutils/releases/download/${COREUTILS_VERSION}/${COREUTILS_ZIP}"
 echo "  [1/4] Fetching uutils/coreutils v${COREUTILS_VERSION}..."
 curl -fL "$COREUTILS_URL" -o "$TMP_DIR/$COREUTILS_ZIP"
-unzip -q "$TMP_DIR/$COREUTILS_ZIP" -d "$TMP_DIR/coreutils"
-find "$TMP_DIR/coreutils" -name "coreutils.exe" -exec cp -f {} "$OUT_DIR/coreutils.exe" \;
+extract_from_zip "$TMP_DIR/$COREUTILS_ZIP" "coreutils.exe" "$OUT_DIR/coreutils.exe"
 
 # 2. uutils/findutils
-FINDUTILS_ZIP="findutils-${FINDUTILS_VERSION}-x86_64-pc-windows-msvc.zip"
+FINDUTILS_ZIP="findutils-x86_64-pc-windows-msvc.zip"
 FINDUTILS_URL="https://github.com/uutils/findutils/releases/download/${FINDUTILS_VERSION}/${FINDUTILS_ZIP}"
 echo "  [2/4] Fetching uutils/findutils v${FINDUTILS_VERSION}..."
-if curl -fL "$FINDUTILS_URL" -o "$TMP_DIR/$FINDUTILS_ZIP" 2>/dev/null; then
-    unzip -q "$TMP_DIR/$FINDUTILS_ZIP" -d "$TMP_DIR/findutils"
-    find "$TMP_DIR/findutils" -name "find.exe" -exec cp -f {} "$OUT_DIR/find.exe" \;
-    find "$TMP_DIR/findutils" -name "xargs.exe" -exec cp -f {} "$OUT_DIR/xargs.exe" \;
-else
-    echo "    (findutils zip fallback: busybox64.exe will provide find & xargs)"
-fi
+curl -fL "$FINDUTILS_URL" -o "$TMP_DIR/$FINDUTILS_ZIP"
+extract_from_zip "$TMP_DIR/$FINDUTILS_ZIP" "find.exe" "$OUT_DIR/find.exe"
+extract_from_zip "$TMP_DIR/$FINDUTILS_ZIP" "xargs.exe" "$OUT_DIR/xargs.exe"
 
 # 3. ripgrep (rg.exe)
 RG_ZIP="ripgrep-${RIPGREP_VERSION}-x86_64-pc-windows-msvc.zip"
 RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ZIP}"
 echo "  [3/4] Fetching ripgrep v${RIPGREP_VERSION}..."
 curl -fL "$RG_URL" -o "$TMP_DIR/$RG_ZIP"
-unzip -q "$TMP_DIR/$RG_ZIP" -d "$TMP_DIR/ripgrep"
-find "$TMP_DIR/ripgrep" -name "rg.exe" -exec cp -f {} "$OUT_DIR/rg.exe" \;
+extract_from_zip "$TMP_DIR/$RG_ZIP" "rg.exe" "$OUT_DIR/rg.exe"
 
 # 4. busybox-w32 (busybox64.exe for POSIX sh + sed/awk/tar/diff/clear)
 echo "  [4/4] Fetching busybox-w32 (busybox64.exe)..."

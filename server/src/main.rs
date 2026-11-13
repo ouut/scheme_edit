@@ -1087,6 +1087,17 @@ async fn main() {
         steel_bin, steel_version, static_dir
     );
 
+    if let Ok(helper_dir) = terminal::ensure_gui_helper_bin() {
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        let path_sep = if cfg!(windows) { ";" } else { ":" };
+        let helper_str = helper_dir.display().to_string();
+        if !current_path.contains(&helper_str) {
+            std::env::set_var("PATH", format!("{}{}{}", helper_str, path_sep, current_path));
+        }
+        info!("CLI helper & Unix tools initialized at: {:?}", helper_dir);
+    }
+    std::env::set_var("SCHEME_IDE_PORT", port.to_string());
+
     let (gui_broadcast, _) = tokio::sync::broadcast::channel(100);
 
     let initial_cwd = std::env::var("WORKSPACE_DIR")

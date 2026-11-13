@@ -82,14 +82,16 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cargo build --release --target ${{ matrix.platform.target }} --manifest-path server/Cargo.toml
-          New-Item -ItemType Directory -Force -Path "dist_win"
-          Copy-Item "server/target/${{ matrix.platform.target }}/release/scheme-ide.exe" "dist_win/scheme-ide.exe"
-          try {
-            ./scripts/fetch-windows-bins.ps1 -OutDir "dist_win/bin/windows"
-          } catch {
-            Write-Warning "Could not fetch all Windows Unix tools: $_"
+          ./scripts/fetch-windows-bins.ps1 -OutDir "bin/windows"
+          foreach ($f in @("coreutils.exe", "find.exe", "xargs.exe", "rg.exe", "busybox64.exe")) {
+            if (-not (Test-Path "bin/windows/$f")) {
+              throw "Required Windows tool bin/windows/$f was not downloaded!"
+            }
           }
+          cargo build --release --target ${{ matrix.platform.target }} --manifest-path server/Cargo.toml
+          New-Item -ItemType Directory -Force -Path "dist_win/bin/windows"
+          Copy-Item "server/target/${{ matrix.platform.target }}/release/scheme-ide.exe" "dist_win/scheme-ide.exe"
+          Copy-Item "bin/windows/*.exe" "dist_win/bin/windows/"
           try {
             Invoke-WebRequest -Uri "https://github.com/mattwparas/steel/releases/download/v0.8.2/steel-interpreter-x86_64-pc-windows-msvc.zip" -OutFile "steel.zip"
             Expand-Archive -Path "steel.zip" -DestinationPath "steel_tmp"

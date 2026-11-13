@@ -78,6 +78,43 @@ pub const BUSYBOX_SHELL_AND_EXTRA_APPLETS: &[&str] = &[
     "clear", "which", "watch", "vi", "ps", "free", "top", "wget", "dos2unix", "unix2dos",
 ];
 
+#[derive(rust_embed::RustEmbed)]
+#[folder = "../bin/windows/"]
+pub struct EmbeddedWindowsBins;
+
+/// Extract embedded Windows tools (`coreutils.exe`, `find.exe`, `xargs.exe`, `rg.exe`, `busybox64.exe`)
+/// into `helper_dir/.vendor` if any embedded `.exe` assets exist in the binary.
+pub fn extract_embedded_windows_bins(helper_dir: &Path) -> Option<PathBuf> {
+    let embedded_vendor = helper_dir.join(".vendor");
+    let mut extracted_any = false;
+    for filename in [
+        "coreutils.exe",
+        "find.exe",
+        "xargs.exe",
+        "rg.exe",
+        "busybox64.exe",
+        "busybox.exe",
+    ] {
+        if let Some(asset) = EmbeddedWindowsBins::get(filename) {
+            let _ = std::fs::create_dir_all(&embedded_vendor);
+            let dst = embedded_vendor.join(filename);
+            let expected_len = asset.data.len() as u64;
+            let already_ok = std::fs::metadata(&dst)
+                .map(|m| m.len() == expected_len && expected_len > 0)
+                .unwrap_or(false);
+            if !already_ok {
+                let _ = std::fs::write(&dst, asset.data.as_ref());
+            }
+            extracted_any = true;
+        }
+    }
+    if extracted_any {
+        Some(embedded_vendor)
+    } else {
+        None
+    }
+}
+
 /// Locate bundled Windows Unix tools directory (`bin/windows`)
 pub fn find_windows_vendor_dir() -> Option<PathBuf> {
     if let Ok(custom) = std::env::var("SCHEME_IDE_WIN_BIN") {
@@ -698,7 +735,8 @@ esac
 
     #[cfg(windows)]
     {
-        let vendor_dir = find_windows_vendor_dir();
+        let vendor_dir =
+            find_windows_vendor_dir().or_else(|| extract_embedded_windows_bins(&helper_dir));
         populate_windows_unix_tools(&helper_dir, vendor_dir.as_deref(), scheme_ide_bin.as_deref());
     }
 

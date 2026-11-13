@@ -1,0 +1,2 @@
+# Precompiled Windows x86_64 Unix tools are placed here by scripts/fetch-windows-bins.{sh,ps1}
+# and embedded into scheme-ide.exe during Windows release builds.
