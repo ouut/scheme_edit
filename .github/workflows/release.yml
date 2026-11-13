@@ -86,6 +86,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path "dist_win"
           Copy-Item "server/target/${{ matrix.platform.target }}/release/scheme-ide.exe" "dist_win/scheme-ide.exe"
           try {
+            ./scripts/fetch-windows-bins.ps1 -OutDir "dist_win/bin/windows"
+          } catch {
+            Write-Warning "Could not fetch all Windows Unix tools: $_"
+          }
+          try {
             Invoke-WebRequest -Uri "https://github.com/mattwparas/steel/releases/download/v0.8.2/steel-interpreter-x86_64-pc-windows-msvc.zip" -OutFile "steel.zip"
             Expand-Archive -Path "steel.zip" -DestinationPath "steel_tmp"
             Copy-Item "steel_tmp/steel-interpreter-x86_64-pc-windows-msvc/steel.exe" "dist_win/steel.exe"

@@ -22,20 +22,353 @@ pub struct TerminalQuery {
     pub cmd: Option<String>,
 }
 
-/// Locate the scheme-ide executable path
+/// Strip Windows UNC verbatim prefix (`\\?\UNC\` or `\\?\`) so Win32 shells, cmd.exe,
+/// and tools can execute and resolve paths without syntax errors.
+pub fn clean_windows_path(p: &Path) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{}", stripped))
+    } else if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        p.to_path_buf()
+    }
+}
+
+/// Hard-link `src` to `dst` (0 extra disk space on NTFS/ext4/APFS), falling back to file copy
+/// if across different volumes/drives. Skips if `dst` already exists with matching file size.
+pub fn link_or_copy_binary(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if !src.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Source binary not found: {}", src.display()),
+        ));
+    }
+    if let (Ok(src_meta), Ok(dst_meta)) = (std::fs::metadata(src), std::fs::metadata(dst)) {
+        if src_meta.len() == dst_meta.len() && src_meta.len() > 0 {
+            return Ok(());
+        }
+    }
+    let _ = std::fs::remove_file(dst);
+    if std::fs::hard_link(src, dst).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(src, dst).map(|_| ())
+}
+
+/// Applets provided by `uutils/coreutils` (`coreutils.exe` multicall binary)
+pub const UUTILS_COREUTILS_APPLETS: &[&str] = &[
+    "arch", "b2sum", "b3sum", "base32", "base64", "basenc", "basename", "cat", "chgrp",
+    "chmod", "chown", "chroot", "cksum", "comm", "cp", "csplit", "cut", "date", "dd", "df",
+    "dir", "dircolors", "dirname", "du", "echo", "env", "expand", "expr", "factor", "false",
+    "fmt", "fold", "groups", "hashsum", "head", "hostid", "hostname", "id", "install", "join",
+    "kill", "link", "ln", "logname", "ls", "md5sum", "mkdir", "mkfifo", "mknod", "mktemp",
+    "more", "mv", "nice", "nl", "nohup", "nproc", "numfmt", "od", "paste", "pathchk", "pinky",
+    "pr", "printenv", "printf", "ptx", "pwd", "readlink", "realpath", "relpath", "rm", "rmdir",
+    "runcon", "seq", "sha1sum", "sha224sum", "sha256sum", "sha384sum", "sha512sum", "shred",
+    "shuf", "sleep", "sort", "split", "stat", "stdbuf", "stty", "sum", "sync", "tac", "tail",
+    "tee", "test", "timeout", "touch", "tr", "true", "truncate", "tsort", "tty", "uname",
+    "unexpand", "uniq", "unlink", "uptime", "users", "vdir", "wc", "who", "whoami", "yes",
+];
+
+/// Host POSIX shell & supplemental applets provided by `busybox-w32` (`busybox64.exe` / `busybox.exe`)
+pub const BUSYBOX_SHELL_AND_EXTRA_APPLETS: &[&str] = &[
+    "sh", "ash", "bash", "busybox", "sed", "awk", "tar", "gzip", "gunzip", "zcat", "bzip2",
+    "bunzip2", "bzcat", "xz", "unxz", "xzcat", "unzip", "diff", "cmp", "patch", "less",
+    "clear", "which", "watch", "vi", "ps", "free", "top", "wget", "dos2unix", "unix2dos",
+];
+
+/// Locate bundled Windows Unix tools directory (`bin/windows`)
+pub fn find_windows_vendor_dir() -> Option<PathBuf> {
+    if let Ok(custom) = std::env::var("SCHEME_IDE_WIN_BIN") {
+        let p = clean_windows_path(Path::new(&custom));
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+
+    let mut search_dirs = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        let clean_exe = clean_windows_path(&exe);
+        if let Some(parent) = clean_exe.parent() {
+            search_dirs.push(parent.join("bin").join("windows"));
+            search_dirs.push(parent.join("windows-bin"));
+            search_dirs.push(parent.to_path_buf());
+            if let Some(grand) = parent.parent() {
+                search_dirs.push(grand.join("bin").join("windows"));
+                if let Some(great) = grand.parent() {
+                    search_dirs.push(great.join("bin").join("windows"));
+                }
+            }
+        }
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        let clean_cwd = clean_windows_path(&cwd);
+        search_dirs.push(clean_cwd.join("bin").join("windows"));
+        search_dirs.push(clean_cwd.join("..").join("bin").join("windows"));
+    }
+    search_dirs.push(PathBuf::from("/workspace/scheme_edit/bin/windows"));
+
+    for dir in search_dirs {
+        if dir.is_dir()
+            && (dir.join("coreutils.exe").exists()
+                || dir.join("busybox64.exe").exists()
+                || dir.join("busybox.exe").exists()
+                || dir.join("rg.exe").exists()
+                || dir.join("find.exe").exists())
+        {
+            return Some(dir);
+        }
+    }
+    None
+}
+
+/// Populate `helper_dir` with Windows native `gui.exe`, `uutils/coreutils` applets,
+/// `uutils/findutils` (`find.exe`, `xargs.exe`), `ripgrep` (`rg.exe`, `grep.exe`),
+/// and `busybox-w32` (`sh.exe` POSIX shell + supplemental applets).
+pub fn populate_windows_unix_tools(
+    helper_dir: &Path,
+    vendor_dir: Option<&Path>,
+    scheme_ide_bin: Option<&Path>,
+) {
+    let _ = std::fs::create_dir_all(helper_dir);
+
+    // 1. Native `gui.exe` and `scheme-ide.exe` hardlinked/copied directly from `scheme-ide` binary
+    if let Some(ide_bin) = scheme_ide_bin {
+        if ide_bin.exists() {
+            let _ = link_or_copy_binary(ide_bin, &helper_dir.join("gui.exe"));
+            let _ = link_or_copy_binary(ide_bin, &helper_dir.join("scheme-ide.exe"));
+        }
+    }
+
+    if let Some(vdir) = vendor_dir {
+        // 2. Expand `uutils/coreutils` (`coreutils.exe`) multicall applets
+        let coreutils_src = vdir.join("coreutils.exe");
+        let has_coreutils = coreutils_src.exists();
+        if has_coreutils {
+            let _ = link_or_copy_binary(&coreutils_src, &helper_dir.join("coreutils.exe"));
+            for applet in UUTILS_COREUTILS_APPLETS {
+                let dst = helper_dir.join(format!("{applet}.exe"));
+                let _ = link_or_copy_binary(&coreutils_src, &dst);
+            }
+        }
+
+        // 3. Link `uutils/findutils` (`find.exe`, `xargs.exe`)
+        let find_src = vdir.join("find.exe");
+        let has_find = find_src.exists();
+        if has_find {
+            let _ = link_or_copy_binary(&find_src, &helper_dir.join("find.exe"));
+        }
+        let xargs_src = vdir.join("xargs.exe");
+        let has_xargs = xargs_src.exists();
+        if has_xargs {
+            let _ = link_or_copy_binary(&xargs_src, &helper_dir.join("xargs.exe"));
+        }
+
+        // 4. Link `ripgrep` (`rg.exe` -> both `rg.exe` and `grep.exe`)
+        let rg_src = vdir.join("rg.exe");
+        let has_rg = rg_src.exists();
+        if has_rg {
+            let _ = link_or_copy_binary(&rg_src, &helper_dir.join("rg.exe"));
+            let _ = link_or_copy_binary(&rg_src, &helper_dir.join("grep.exe"));
+        }
+
+        // 5. Link `busybox-w32` (`busybox64.exe` / `busybox.exe`) for POSIX `sh.exe` and extra tools
+        let bb_src = if vdir.join("busybox64.exe").exists() {
+            Some(vdir.join("busybox64.exe"))
+        } else if vdir.join("busybox.exe").exists() {
+            Some(vdir.join("busybox.exe"))
+        } else {
+            None
+        };
+
+        if let Some(bb) = bb_src {
+            for applet in BUSYBOX_SHELL_AND_EXTRA_APPLETS {
+                let dst = helper_dir.join(format!("{applet}.exe"));
+                let _ = link_or_copy_binary(&bb, &dst);
+            }
+            // Fallback: if coreutils/find/rg were not separately present, populate missing applets from busybox
+            if !has_coreutils {
+                for applet in UUTILS_COREUTILS_APPLETS {
+                    let dst = helper_dir.join(format!("{applet}.exe"));
+                    if !dst.exists() {
+                        let _ = link_or_copy_binary(&bb, &dst);
+                    }
+                }
+            }
+            if !has_find && !helper_dir.join("find.exe").exists() {
+                let _ = link_or_copy_binary(&bb, &helper_dir.join("find.exe"));
+            }
+            if !has_xargs && !helper_dir.join("xargs.exe").exists() {
+                let _ = link_or_copy_binary(&bb, &helper_dir.join("xargs.exe"));
+            }
+            if !has_rg && !helper_dir.join("grep.exe").exists() {
+                let _ = link_or_copy_binary(&bb, &helper_dir.join("grep.exe"));
+            }
+
+            // Write POSIX shell init profile for busybox sh
+            let shinit_path = helper_dir.join("shinit.sh");
+            let helper_posix = clean_windows_path(helper_dir)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let shinit_content = format!(
+                "# Scheme IDE Windows POSIX Shell Init\n\
+                 export PATH=\"{}:$PATH\"\n\
+                 export PS1='\\[\\033[38;2;56;189;248m\\]\\w\\[\\033[0m\\] \\$ '\n",
+                helper_posix
+            );
+            let _ = std::fs::write(shinit_path, shinit_content);
+        }
+    }
+
+    // 6. Write resilient `gui.bat` / `gui.cmd` fallback (with curl.exe & PowerShell HTTP fallback)
+    let cand_str = scheme_ide_bin
+        .map(|p| clean_windows_path(p).to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let bat_content = format!(
+        r#"@echo off
+setlocal
+if exist "%~dp0gui.exe" (
+    "%~dp0gui.exe" %*
+    exit /b %ERRORLEVEL%
+)
+if defined SCHEME_IDE_BIN (
+    if exist "%SCHEME_IDE_BIN%" (
+        "%SCHEME_IDE_BIN%" gui %*
+        exit /b %ERRORLEVEL%
+    )
+)
+if not "{cand}"=="" (
+    if exist "{cand}" (
+        "{cand}" gui %*
+        exit /b %ERRORLEVEL%
+    )
+)
+for /f "delims=" %%I in ('where scheme-ide.exe 2^>nul') do (
+    if exist "%%I" (
+        "%%I" gui %*
+        exit /b %ERRORLEVEL%
+    )
+)
+
+set "PORT=%SCHEME_IDE_PORT%"
+if "%PORT%"=="" set "PORT=8085"
+set "SUBCMD=%~1"
+if "%SUBCMD%"=="" set "SUBCMD=help"
+
+if /i "%SUBCMD%"=="open" goto do_open
+if /i "%SUBCMD%"=="edit" goto do_open
+if /i "%SUBCMD%"=="close" goto do_close
+if /i "%SUBCMD%"=="ratio" goto do_ratio
+if /i "%SUBCMD%"=="cd" goto do_cd
+if /i "%SUBCMD%"=="help" goto do_help
+if /i "%SUBCMD%"=="--help" goto do_help
+if /i "%SUBCMD%"=="-h" goto do_help
+goto do_unknown
+
+:do_open
+set "TARGET=%~2"
+if "%TARGET%"=="" (
+    set "TARGET_JSON="
+) else (
+    set "TARGET_FULL=%~f2"
+    set "TARGET_JSON=%TARGET_FULL:\=/%"
+)
+where curl >nul 2>nul
+if %ERRORLEVEL% EQU 0 (
+    curl -s -X POST "http://127.0.0.1:%PORT%/api/gui" -H "Content-Type: application/json" -d "{{\"cmd\":\"open\",\"file\":\"%TARGET_JSON%\"}}" >nul 2>&1
+) else (
+    powershell -NoProfile -Command "try {{ Invoke-RestMethod -Uri 'http://127.0.0.1:%PORT%/api/gui' -Method Post -ContentType 'application/json' -Body '{{\"cmd\":\"open\",\"file\":\"%TARGET_JSON%\"}}' }} catch {{}}" >nul 2>&1
+)
+if "%TARGET%"=="" (
+    echo [GUI] Action: open scratch-*.scm
+) else (
+    echo [GUI] Action: open %TARGET%
+)
+exit /b 0
+
+:do_close
+set "TARGET=%~2"
+set "TARGET_JSON=%TARGET:\=/%"
+where curl >nul 2>nul
+if %ERRORLEVEL% EQU 0 (
+    curl -s -X POST "http://127.0.0.1:%PORT%/api/gui" -H "Content-Type: application/json" -d "{{\"cmd\":\"close\",\"file\":\"%TARGET_JSON%\"}}" >nul 2>&1
+) else (
+    powershell -NoProfile -Command "try {{ Invoke-RestMethod -Uri 'http://127.0.0.1:%PORT%/api/gui' -Method Post -ContentType 'application/json' -Body '{{\"cmd\":\"close\",\"file\":\"%TARGET_JSON%\"}}' }} catch {{}}" >nul 2>&1
+)
+if "%TARGET%"=="" (
+    echo [GUI] Action: close
+) else (
+    echo [GUI] Action: close %TARGET%
+)
+exit /b 0
+
+:do_ratio
+set "RATIO=%~2"
+if "%RATIO%"=="" set "RATIO=50:50"
+where curl >nul 2>nul
+if %ERRORLEVEL% EQU 0 (
+    curl -s -X POST "http://127.0.0.1:%PORT%/api/gui" -H "Content-Type: application/json" -d "{{\"cmd\":\"ratio\",\"args\":[\"%RATIO%\"]}}" >nul 2>&1
+) else (
+    powershell -NoProfile -Command "try {{ Invoke-RestMethod -Uri 'http://127.0.0.1:%PORT%/api/gui' -Method Post -ContentType 'application/json' -Body '{{\"cmd\":\"ratio\",\"args\":[\"%RATIO%\"]}}' }} catch {{}}" >nul 2>&1
+)
+echo [GUI] Action: ratio %RATIO%
+exit /b 0
+
+:do_cd
+set "DIR=%~f2"
+if "%~2"=="" set "DIR=%CD%"
+set "DIR_JSON=%DIR:\=/%"
+where curl >nul 2>nul
+if %ERRORLEVEL% EQU 0 (
+    curl -s -X POST "http://127.0.0.1:%PORT%/api/gui" -H "Content-Type: application/json" -d "{{\"cmd\":\"cd\",\"dir\":\"%DIR_JSON%\",\"cwd\":\"%DIR_JSON%\"}}" >nul 2>&1
+) else (
+    powershell -NoProfile -Command "try {{ Invoke-RestMethod -Uri 'http://127.0.0.1:%PORT%/api/gui' -Method Post -ContentType 'application/json' -Body '{{\"cmd\":\"cd\",\"dir\":\"%DIR_JSON%\",\"cwd\":\"%DIR_JSON%\"}}' }} catch {{}}" >nul 2>&1
+)
+echo [GUI] Working directory set: %DIR%
+exit /b 0
+
+:do_help
+echo [GUI] Action: help
+echo   gui open [file]   - Open file in editor (defaults to scratch-*.scm)
+echo   gui edit [file]   - Open file in editor (defaults to scratch-*.scm)
+echo   gui close [file]  - Close current or specified file
+echo   gui cd [dir]      - Change working directory
+echo   gui ratio ^<L:R^>   - Adjust editor/terminal ratio (e.g. 60:40)
+echo   gui help          - Show this help message
+exit /b 0
+
+:do_unknown
+echo [GUI] Action: unknown command '%SUBCMD%' (type 'gui help' for commands)
+exit /b 0
+"#,
+        cand = cand_str
+    );
+
+    let _ = std::fs::write(helper_dir.join("gui.bat"), &bat_content);
+    let _ = std::fs::write(helper_dir.join("gui.cmd"), &bat_content);
+}
+
+/// Locate the scheme-ide executable path (cleaned of Windows `\\?\` prefix)
 pub fn find_scheme_ide_binary() -> Option<PathBuf> {
     if let Ok(bin) = std::env::var("SCHEME_IDE_BIN") {
-        let p = PathBuf::from(bin);
+        let p = clean_windows_path(Path::new(&bin));
         if p.exists() {
             return Some(p);
         }
     }
 
     if let Ok(exe) = std::env::current_exe() {
-        let name = exe.file_name().and_then(|f| f.to_str()).unwrap_or("");
-        let is_deps = exe.to_string_lossy().contains("deps");
-        if !is_deps && (name == "scheme-ide" || name == "scheme-ide.exe") {
-            return Some(exe);
+        let clean_exe = clean_windows_path(&exe);
+        let name = clean_exe.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        let is_deps = clean_exe.to_string_lossy().contains("deps");
+        if !is_deps
+            && (name.eq_ignore_ascii_case("scheme-ide")
+                || name.eq_ignore_ascii_case("scheme-ide.exe"))
+        {
+            return Some(clean_exe);
         }
     }
 
@@ -45,19 +378,25 @@ pub fn find_scheme_ide_binary() -> Option<PathBuf> {
         PathBuf::from("/workspace/scheme_edit/scheme-ide"),
         PathBuf::from("./scheme-ide"),
         PathBuf::from("scheme-ide"),
+        PathBuf::from("./scheme-ide.exe"),
+        PathBuf::from("scheme-ide.exe"),
+        PathBuf::from("server/target/release/scheme-ide.exe"),
+        PathBuf::from("server/target/debug/scheme-ide.exe"),
+        PathBuf::from("target/release/scheme-ide.exe"),
+        PathBuf::from("target/debug/scheme-ide.exe"),
     ];
 
     for cand in candidates {
         if cand.exists() {
             if let Ok(canon) = cand.canonicalize() {
-                return Some(canon);
+                return Some(clean_windows_path(&canon));
             }
-            return Some(cand);
+            return Some(clean_windows_path(&cand));
         }
     }
 
     if let Ok(p) = which::which(if cfg!(windows) { "scheme-ide.exe" } else { "scheme-ide" }) {
-        return Some(p);
+        return Some(clean_windows_path(&p));
     }
 
     None
@@ -66,8 +405,9 @@ pub fn find_scheme_ide_binary() -> Option<PathBuf> {
 /// Normalize path by collapsing `.` and `..` without requiring file existence
 pub fn normalize_path(path: &Path) -> PathBuf {
     use std::path::Component;
+    let clean = clean_windows_path(path);
     let mut components = Vec::new();
-    for comp in path.components() {
+    for comp in clean.components() {
         match comp {
             Component::CurDir => {}
             Component::ParentDir => {
@@ -116,17 +456,20 @@ pub async fn run_gui_cli(args: &[String]) {
 
     match subcmd {
         "open" | "edit" => {
-            let file_arg = args.get(1).map(|s| s.trim()).unwrap_or("");
+            let file_arg = args
+                .get(1)
+                .map(|s| s.trim().trim_matches('"').trim_matches('\''))
+                .unwrap_or("");
             let resolved_file = if file_arg.is_empty() {
                 "".to_string()
             } else {
-                let p = Path::new(file_arg);
+                let p = clean_windows_path(Path::new(file_arg));
                 let full = if p.is_absolute() {
-                    p.to_path_buf()
+                    p
                 } else if let Ok(cwd) = std::env::current_dir() {
-                    cwd.join(p)
+                    clean_windows_path(&cwd).join(p)
                 } else {
-                    p.to_path_buf()
+                    p
                 };
                 normalize_path(&full).to_string_lossy().to_string()
             };
@@ -153,21 +496,24 @@ pub async fn run_gui_cli(args: &[String]) {
             }
         }
         "cd" => {
-            let dir_arg = args.get(1).map(|s| s.trim()).unwrap_or("");
+            let dir_arg = args
+                .get(1)
+                .map(|s| s.trim().trim_matches('"').trim_matches('\''))
+                .unwrap_or("");
             let resolved_dir = if dir_arg.is_empty() {
                 if let Ok(cwd) = std::env::current_dir() {
-                    cwd.to_string_lossy().to_string()
+                    clean_windows_path(&cwd).to_string_lossy().to_string()
                 } else {
                     ".".to_string()
                 }
             } else {
-                let p = Path::new(dir_arg);
+                let p = clean_windows_path(Path::new(dir_arg));
                 let full = if p.is_absolute() {
-                    p.to_path_buf()
+                    p
                 } else if let Ok(cwd) = std::env::current_dir() {
-                    cwd.join(p)
+                    clean_windows_path(&cwd).join(p)
                 } else {
-                    p.to_path_buf()
+                    p
                 };
                 normalize_path(&full).to_string_lossy().to_string()
             };
@@ -185,7 +531,10 @@ pub async fn run_gui_cli(args: &[String]) {
             }
         }
         "close" => {
-            let file_arg = args.get(1).map(|s| s.trim()).unwrap_or("");
+            let file_arg = args
+                .get(1)
+                .map(|s| s.trim().trim_matches('"').trim_matches('\''))
+                .unwrap_or("");
             let payload = serde_json::json!({
                 "cmd": "close",
                 "file": file_arg
@@ -232,12 +581,15 @@ pub async fn run_gui_cli(args: &[String]) {
     }
 }
 
-/// Ensure a directory containing the `gui` executable/wrapper exists and is ready to be prepended to PATH
+/// Ensure a directory containing the `gui` executable/wrapper and bundled Unix tools exists
+/// and is ready to be prepended to PATH
 pub fn ensure_gui_helper_bin() -> Result<PathBuf, anyhow::Error> {
-    let helper_dir = std::env::temp_dir().join("scheme-ide-bin");
+    let helper_dir = clean_windows_path(&std::env::temp_dir().join("scheme-ide-bin"));
     std::fs::create_dir_all(&helper_dir)?;
 
-    let scheme_ide_candidate = find_scheme_ide_binary()
+    let scheme_ide_bin = find_scheme_ide_binary();
+    let scheme_ide_candidate = scheme_ide_bin
+        .as_ref()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
 
@@ -346,46 +698,8 @@ esac
 
     #[cfg(windows)]
     {
-        let bat_path = helper_dir.join("gui.bat");
-        let cmd_path = helper_dir.join("gui.cmd");
-        let bat_content = format!(
-            r#"@echo off
-setlocal
-if defined SCHEME_IDE_BIN (
-    "%SCHEME_IDE_BIN%" gui %*
-    exit /b %ERRORLEVEL%
-)
-if exist "{}" (
-    "{}" gui %*
-    exit /b %ERRORLEVEL%
-)
-where scheme-ide >nul 2>nul
-if %ERRORLEVEL% EQU 0 (
-    scheme-ide gui %*
-    exit /b %ERRORLEVEL%
-)
-echo [GUI Error] Cannot find scheme-ide.exe to execute gui command.
-exit /b 1
-"#,
-            scheme_ide_candidate, scheme_ide_candidate
-        );
-        let _ = std::fs::write(&bat_path, &bat_content);
-        let _ = std::fs::write(&cmd_path, &bat_content);
-
-        let ide_bat = helper_dir.join("scheme-ide.bat");
-        let ide_cmd = helper_dir.join("scheme-ide.cmd");
-        let ide_bat_content = format!(
-            r#"@echo off
-setlocal
-if exist "{}" (
-    "{}" %*
-    exit /b %ERRORLEVEL%
-)
-"#,
-            scheme_ide_candidate, scheme_ide_candidate
-        );
-        let _ = std::fs::write(&ide_bat, &ide_bat_content);
-        let _ = std::fs::write(&ide_cmd, &ide_bat_content);
+        let vendor_dir = find_windows_vendor_dir();
+        populate_windows_unix_tools(&helper_dir, vendor_dir.as_deref(), scheme_ide_bin.as_deref());
     }
 
     Ok(helper_dir)
@@ -436,18 +750,20 @@ pub fn spawn_pty(
         pixel_height: 0,
     })?;
 
+    let clean_workspace = clean_windows_path(workspace_dir);
+
     let cmd = if cmd_name == "steel" {
         let (bin, is_self) = if steel_bin.exists() {
             let is_curr = std::env::current_exe()
-                .map(|exe| exe == *steel_bin)
+                .map(|exe| clean_windows_path(&exe) == clean_windows_path(steel_bin))
                 .unwrap_or(false);
-            (steel_bin.to_path_buf(), is_curr)
+            (clean_windows_path(steel_bin), is_curr)
         } else if let Ok(which_steel) = which::which(if cfg!(windows) { "steel.exe" } else { "steel" }) {
-            (which_steel, false)
+            (clean_windows_path(&which_steel), false)
         } else if Path::new("/root/.cargo/bin/steel").exists() {
             (PathBuf::from("/root/.cargo/bin/steel"), false)
         } else if let Ok(exe) = std::env::current_exe() {
-            (exe, true)
+            (clean_windows_path(&exe), true)
         } else if cfg!(windows) {
             (PathBuf::from("steel.exe"), false)
         } else {
@@ -457,14 +773,25 @@ pub fn spawn_pty(
         if is_self {
             cb.arg("--steel");
         }
-        cb.cwd(workspace_dir);
+        cb.cwd(&clean_workspace);
         cb.env("TERM", "xterm-256color");
         cb.env("COLORTERM", "truecolor");
         cb
     } else {
-        let shell_bin = if cfg!(windows) {
-            if let Ok(comspec) = std::env::var("COMSPEC") {
-                PathBuf::from(comspec)
+        let helper_dir_opt = ensure_gui_helper_bin().ok();
+
+        let shell_bin = if let Ok(custom_shell) = std::env::var("SCHEME_IDE_SHELL") {
+            clean_windows_path(Path::new(&custom_shell))
+        } else if cfg!(windows) {
+            // Pure Scheme 2: Prefer bundled POSIX `sh.exe` (busybox-w32) in helper_dir
+            let bundled_sh = helper_dir_opt
+                .as_ref()
+                .map(|d| d.join("sh.exe"))
+                .filter(|p| p.exists());
+            if let Some(sh_exe) = bundled_sh {
+                sh_exe
+            } else if let Ok(comspec) = std::env::var("COMSPEC") {
+                clean_windows_path(Path::new(&comspec))
             } else {
                 PathBuf::from("cmd.exe")
             }
@@ -485,16 +812,26 @@ pub fn spawn_pty(
         } else {
             PathBuf::from("sh")
         };
-        let mut cb = CommandBuilder::new(shell_bin);
-        cb.cwd(workspace_dir);
+
+        let mut cb = CommandBuilder::new(&shell_bin);
+        cb.cwd(&clean_workspace);
         cb.env("TERM", "xterm-256color");
         cb.env("COLORTERM", "truecolor");
 
-        // Inject scheme-ide GUI CLI helper directory into PATH so `gui` works everywhere with tab completion
-        if let Ok(helper_dir) = ensure_gui_helper_bin() {
+        // Inject scheme-ide GUI CLI & bundled Unix tools directory into PATH
+        if let Some(helper_dir) = helper_dir_opt {
             let current_path = std::env::var("PATH").unwrap_or_default();
             let path_sep = if cfg!(windows) { ";" } else { ":" };
             cb.env("PATH", format!("{}{}{}", helper_dir.display(), path_sep, current_path));
+
+            let shinit = helper_dir.join("shinit.sh");
+            if shinit.exists() {
+                cb.env("ENV", shinit.to_string_lossy().replace('\\', "/"));
+            }
+        }
+
+        if let Some(ide_bin) = find_scheme_ide_binary() {
+            cb.env("SCHEME_IDE_BIN", ide_bin.to_string_lossy().to_string());
         }
         cb.env("SCHEME_IDE_PORT", port.to_string());
         cb
@@ -966,5 +1303,76 @@ mod tests {
         let (feedback, action) = handle_gui_command("gui open my_code.scm");
         assert!(feedback.contains("my_code.scm"));
         assert_eq!(action.unwrap()["file"], "my_code.scm");
+    }
+
+    #[test]
+    fn test_clean_windows_path_strips_verbatim_prefix() {
+        let p1 = Path::new(r"\\?\C:\Users\Alice\scheme-ide.exe");
+        assert_eq!(clean_windows_path(p1), PathBuf::from(r"C:\Users\Alice\scheme-ide.exe"));
+
+        let p2 = Path::new(r"\\?\UNC\server\share\file.scm");
+        assert_eq!(clean_windows_path(p2), PathBuf::from(r"\\server\share\file.scm"));
+
+        let p3 = Path::new("/workspace/scheme_edit/foo.scm");
+        assert_eq!(clean_windows_path(p3), PathBuf::from("/workspace/scheme_edit/foo.scm"));
+    }
+
+    #[test]
+    fn test_populate_windows_unix_tools_full_suite() {
+        let base = std::env::temp_dir().join(format!("scheme_ide_win_test_{}", std::process::id()));
+        let vendor_dir = base.join("vendor");
+        let helper_dir = base.join("helper");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&vendor_dir).unwrap();
+        std::fs::create_dir_all(&helper_dir).unwrap();
+
+        let fake_ide = base.join("scheme-ide.exe");
+        std::fs::write(&fake_ide, b"FAKE_SCHEME_IDE_BIN").unwrap();
+        std::fs::write(vendor_dir.join("coreutils.exe"), b"FAKE_UUTILS_COREUTILS").unwrap();
+        std::fs::write(vendor_dir.join("find.exe"), b"FAKE_UUTILS_FIND").unwrap();
+        std::fs::write(vendor_dir.join("xargs.exe"), b"FAKE_UUTILS_XARGS").unwrap();
+        std::fs::write(vendor_dir.join("rg.exe"), b"FAKE_RIPGREP").unwrap();
+        std::fs::write(vendor_dir.join("busybox64.exe"), b"FAKE_BUSYBOX64").unwrap();
+
+        populate_windows_unix_tools(&helper_dir, Some(&vendor_dir), Some(&fake_ide));
+
+        // 1. Native gui.exe & scheme-ide.exe
+        assert_eq!(std::fs::read(helper_dir.join("gui.exe")).unwrap(), b"FAKE_SCHEME_IDE_BIN");
+        assert_eq!(std::fs::read(helper_dir.join("scheme-ide.exe")).unwrap(), b"FAKE_SCHEME_IDE_BIN");
+
+        // 2. uutils/coreutils applets
+        for cmd in ["ls", "cat", "cp", "mv", "rm", "mkdir", "touch", "head", "tail", "wc", "sort", "uniq"] {
+            assert_eq!(
+                std::fs::read(helper_dir.join(format!("{cmd}.exe"))).unwrap(),
+                b"FAKE_UUTILS_COREUTILS",
+                "Expected {cmd}.exe to be linked to coreutils.exe"
+            );
+        }
+
+        // 3. uutils/findutils
+        assert_eq!(std::fs::read(helper_dir.join("find.exe")).unwrap(), b"FAKE_UUTILS_FIND");
+        assert_eq!(std::fs::read(helper_dir.join("xargs.exe")).unwrap(), b"FAKE_UUTILS_XARGS");
+
+        // 4. ripgrep (rg.exe and grep.exe)
+        assert_eq!(std::fs::read(helper_dir.join("rg.exe")).unwrap(), b"FAKE_RIPGREP");
+        assert_eq!(std::fs::read(helper_dir.join("grep.exe")).unwrap(), b"FAKE_RIPGREP");
+
+        // 5. busybox64 POSIX shell & extra tools
+        for cmd in ["sh", "ash", "bash", "sed", "awk", "tar", "diff", "clear"] {
+            assert_eq!(
+                std::fs::read(helper_dir.join(format!("{cmd}.exe"))).unwrap(),
+                b"FAKE_BUSYBOX64",
+                "Expected {cmd}.exe to be linked to busybox64.exe"
+            );
+        }
+        assert!(helper_dir.join("shinit.sh").exists());
+
+        // 6. Resilient gui.bat fallback without verbatim prefix
+        let bat = std::fs::read_to_string(helper_dir.join("gui.bat")).unwrap();
+        assert!(bat.contains("gui.exe"));
+        assert!(bat.contains("/api/gui"));
+        assert!(!bat.contains(r"\\?\"));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

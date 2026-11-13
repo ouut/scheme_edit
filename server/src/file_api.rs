@@ -69,12 +69,12 @@ pub async fn read_file_handler(
         }));
     }
 
-    let p = Path::new(&params.path);
-    let target_path = if p.is_absolute() {
-        p.to_path_buf()
+    let clean_param = crate::terminal::clean_windows_path(Path::new(params.path.trim()));
+    let target_path = if clean_param.is_absolute() {
+        clean_param
     } else {
         let base = state.current_dir.read().await.clone();
-        base.join(p)
+        base.join(clean_param)
     };
 
     match tokio::fs::read_to_string(&target_path).await {
@@ -106,12 +106,12 @@ pub async fn write_file_handler(
         }));
     }
 
-    let p = Path::new(&payload.path);
-    let target_path = if p.is_absolute() {
-        p.to_path_buf()
+    let clean_param = crate::terminal::clean_windows_path(Path::new(payload.path.trim()));
+    let target_path = if clean_param.is_absolute() {
+        clean_param
     } else {
         let base = state.current_dir.read().await.clone();
-        base.join(p)
+        base.join(clean_param)
     };
 
     if let Some(parent) = target_path.parent() {
@@ -147,7 +147,7 @@ pub async fn gui_action_handler(
 
     // Synchronize working directory if reported in payload
     if let Some(ref cwd) = payload.cwd {
-        let p = PathBuf::from(cwd);
+        let p = crate::terminal::clean_windows_path(Path::new(cwd));
         if p.is_dir() {
             *state.current_dir.write().await = p;
         }
@@ -164,16 +164,16 @@ pub async fn gui_action_handler(
             let p = if target_dir.is_empty() {
                 state.current_dir.read().await.clone()
             } else {
-                let path = Path::new(&target_dir);
+                let path = crate::terminal::clean_windows_path(Path::new(&target_dir));
                 if path.is_absolute() {
-                    path.to_path_buf()
+                    path
                 } else {
                     let base = state.current_dir.read().await.clone();
                     base.join(path)
                 }
             };
             if p.is_dir() {
-                let canon = p.canonicalize().unwrap_or(p);
+                let canon = crate::terminal::clean_windows_path(&p.canonicalize().unwrap_or(p));
                 *state.current_dir.write().await = canon.clone();
                 serde_json::json!({
                     "type": "gui_action",
@@ -195,7 +195,9 @@ pub async fn gui_action_handler(
             let file = if file.trim().is_empty() {
                 crate::terminal::find_next_scratch_file()
             } else {
-                file
+                crate::terminal::clean_windows_path(Path::new(file.trim()))
+                    .to_string_lossy()
+                    .to_string()
             };
             serde_json::json!({
                 "type": "gui_action",
@@ -208,6 +210,13 @@ pub async fn gui_action_handler(
                 .file
                 .or_else(|| payload.args.first().cloned())
                 .unwrap_or_default();
+            let file = if file.trim().is_empty() {
+                String::new()
+            } else {
+                crate::terminal::clean_windows_path(Path::new(file.trim()))
+                    .to_string_lossy()
+                    .to_string()
+            };
             serde_json::json!({
                 "type": "gui_action",
                 "action": "close",

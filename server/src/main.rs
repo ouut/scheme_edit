@@ -1008,14 +1008,17 @@ pub fn create_app(state: Arc<AppState>) -> Router {
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // 0. CLI GUI subcommand: `scheme-ide gui <args>` or invoked directly as `gui`
+    // 0. CLI GUI subcommand: `scheme-ide gui <args>` or invoked directly as `gui` / `gui.exe`
     let invoked_as_gui = args.first()
         .and_then(|a| Path::new(a).file_name())
         .and_then(|f| f.to_str())
-        .map(|s| s == "gui" || s == "gui.exe")
+        .map(|s| s.eq_ignore_ascii_case("gui") || s.eq_ignore_ascii_case("gui.exe"))
         .unwrap_or(false);
 
-    if invoked_as_gui || (args.len() > 1 && (args[1] == "gui" || args[1] == "--gui")) {
+    if invoked_as_gui
+        || (args.len() > 1
+            && (args[1].eq_ignore_ascii_case("gui") || args[1].eq_ignore_ascii_case("--gui")))
+    {
         let cli_args: Vec<String> = if invoked_as_gui {
             args.into_iter().skip(1).collect()
         } else {

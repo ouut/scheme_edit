@@ -5,6 +5,27 @@ import { OpenFile, ParinferMode, ShortcutId, GuiActionPayload, SavedSessionState
 
 const SESSION_STORAGE_KEY = 'scheme_ide_session_state';
 
+/**
+ * Normalize file paths across Windows (`\`, `\\?\`) and Unix (`/`)
+ */
+export function normalizeFilePath(p: string): string {
+  let clean = p.trim();
+  if (clean.startsWith('\\\\?\\UNC\\')) {
+    clean = '\\\\' + clean.slice(8);
+  } else if (clean.startsWith('\\\\?\\')) {
+    clean = clean.slice(4);
+  }
+  return clean.replace(/\\/g, '/');
+}
+
+/**
+ * Extract display file name from a Windows or Unix path
+ */
+export function extractFileName(p: string): string {
+  const norm = normalizeFilePath(p);
+  return norm.split('/').pop() || norm;
+}
+
 const getSavedSession = (): SavedSessionState | null => {
   try {
     const raw = localStorage.getItem(SESSION_STORAGE_KEY);
@@ -144,12 +165,15 @@ export const App: React.FC = () => {
   // Open file (from server /api/file, GUI action, or scratch)
   const openFile = useCallback(
     async (filePath: string, initialContent?: string) => {
-      const cleanPath = filePath.trim();
+      const cleanPath = normalizeFilePath(filePath);
       if (!cleanPath) return;
 
       // If already open, switch active tab and ensure left panel is open
-      if (openFilesRef.current.some((f) => f.path === cleanPath)) {
-        setActiveFilePath(cleanPath);
+      const existing = openFilesRef.current.find(
+        (f) => normalizeFilePath(f.path) === cleanPath
+      );
+      if (existing) {
+        setActiveFilePath(existing.path);
         setSplitRatio((r) => (r <= 0.05 ? 0.6 : r));
         setActivePane('editor');
         setTimeout(() => {
@@ -186,20 +210,21 @@ export const App: React.FC = () => {
         }
 
         let finalContent = content || '';
-        if (!finalContent && cleanPath.startsWith('scratch-') && cleanPath.endsWith('.scm')) {
+        const baseName = extractFileName(cleanPath);
+        if (!finalContent && baseName.startsWith('scratch-') && baseName.endsWith('.scm')) {
           finalContent = ';; Scheme Scratch Buffer\n';
         }
 
         const newFile: OpenFile = {
           path: cleanPath,
-          name: cleanPath.split('/').pop() || cleanPath,
+          name: baseName,
           content: finalContent,
           savedContent: finalContent,
           isModified: false,
         };
 
         setOpenFiles((prev) => {
-          if (prev.some((f) => f.path === cleanPath)) {
+          if (prev.some((f) => normalizeFilePath(f.path) === cleanPath)) {
             return prev;
           }
           return [...prev, newFile];
@@ -221,21 +246,28 @@ export const App: React.FC = () => {
   // Close file tab
   const closeFile = useCallback(
     (filePath: string) => {
+      const cleanTarget = normalizeFilePath(filePath);
+      const matchesTarget = (f: OpenFile) =>
+        normalizeFilePath(f.path) === cleanTarget || f.name === cleanTarget;
+
       // Clear pending save timer
-      const timer = saveTimerRef.current.get(filePath);
+      const timer = saveTimerRef.current.get(filePath) || saveTimerRef.current.get(cleanTarget);
       if (timer) {
         window.clearTimeout(timer);
         saveTimerRef.current.delete(filePath);
+        saveTimerRef.current.delete(cleanTarget);
       }
 
       setOpenFiles((prev) => {
-        const nextFiles = prev.filter((f) => f.path !== filePath);
+        const targetFile = prev.find(matchesTarget);
+        const targetPath = targetFile ? targetFile.path : cleanTarget;
+        const nextFiles = prev.filter((f) => f.path !== targetPath);
 
         setActiveFilePath((currentActive) => {
-          if (currentActive === filePath) {
+          if (currentActive === targetPath) {
             if (nextFiles.length > 0) {
-              const idx = prev.findIndex((f) => f.path === filePath);
-              const nextActive = nextFiles[Math.min(idx, nextFiles.length - 1)];
+              const idx = prev.findIndex((f) => f.path === targetPath);
+              const nextActive = nextFiles[Math.min(Math.max(0, idx), nextFiles.length - 1)];
               return nextActive.path;
             } else {
               return null;
@@ -360,14 +392,15 @@ export const App: React.FC = () => {
       const restoredFiles: OpenFile[] = [];
 
       for (const filePath of saved.openFilePaths) {
-        const cleanPath = filePath.trim();
+        const cleanPath = normalizeFilePath(filePath);
         if (!cleanPath) continue;
 
-        if (cleanPath.startsWith('scratch-') && cleanPath.endsWith('.scm')) {
-          const draft = scratchDrafts[cleanPath] || ';; Scheme Scratch Buffer\n';
+        const baseName = extractFileName(cleanPath);
+        if (baseName.startsWith('scratch-') && baseName.endsWith('.scm')) {
+          const draft = scratchDrafts[cleanPath] || scratchDrafts[filePath.trim()] || ';; Scheme Scratch Buffer\n';
           restoredFiles.push({
             path: cleanPath,
-            name: cleanPath.split('/').pop() || cleanPath,
+            name: baseName,
             content: draft,
             savedContent: draft,
             isModified: false,
@@ -386,7 +419,7 @@ export const App: React.FC = () => {
               }
               restoredFiles.push({
                 path: cleanPath,
-                name: cleanPath.split('/').pop() || cleanPath,
+                name: baseName,
                 content: content,
                 savedContent: content,
                 isModified: false,

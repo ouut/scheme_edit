@@ -433,6 +433,39 @@ function assert(condition, message) {
   assert(wrapped.includes('(fib 4)'), '16c. Wrapped code preserves all inner expressions');
 }
 
+// ------------------------------------------------------------------
+// 17. Windows file path normalization & tab name extraction
+// ------------------------------------------------------------------
+{
+  function normalizeFilePath(p) {
+    let clean = p.trim();
+    if (clean.startsWith('\\\\?\\UNC\\')) {
+      clean = '\\\\' + clean.slice(8);
+    } else if (clean.startsWith('\\\\?\\')) {
+      clean = clean.slice(4);
+    }
+    return clean.replace(/\\/g, '/');
+  }
+
+  function extractFileName(p) {
+    const norm = normalizeFilePath(p);
+    return norm.split('/').pop() || norm;
+  }
+
+  assert(
+    normalizeFilePath('\\\\?\\C:\\Users\\Alice\\project\\fib.scm') === 'C:/Users/Alice/project/fib.scm',
+    '17a. Strip Windows \\\\?\\ prefix and normalize backslashes to forward slashes'
+  );
+  assert(
+    extractFileName('C:\\Users\\Alice\\project\\fib.scm') === 'fib.scm',
+    '17b. Extract tab filename from Windows backslash path'
+  );
+  assert(
+    normalizeFilePath('C:\\Users\\Alice\\project\\fib.scm') === normalizeFilePath('C:/Users/Alice/project/fib.scm'),
+    '17c. Deduplicate Windows backslash and forward-slash paths'
+  );
+}
+
 console.log('================================================================');
 console.log(`Results: ${passed} passed, ${failed} failed`);
 console.log('================================================================');
